@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Tab Domain Grouping",
+  "version": "1.0",
+  "description": "Group tabs by their domain names",
+  "permissions": ["tabs", "tabGroups"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Group tabs by domain"
+  },
+  "host_permissions": ["<all_urls>"]
+}
