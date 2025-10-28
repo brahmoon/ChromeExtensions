@@ -10,27 +10,39 @@ const updatedAtElement = document.getElementById('updated-at');
 const resizeHandle = document.getElementById('resize-handle');
 
 const WIDTH_STORAGE_KEY = 'popupWidth';
+const HEIGHT_STORAGE_KEY = 'popupHeight';
 const MIN_POPUP_WIDTH = 320;
-const MAX_POPUP_WIDTH = 800;
+const MIN_POPUP_HEIGHT = 240;
 
-function clampWidth(width) {
-  if (typeof width !== 'number' || Number.isNaN(width)) {
-    return MIN_POPUP_WIDTH;
+function clampDimension(value, minimum) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return minimum;
   }
-  return Math.min(MAX_POPUP_WIDTH, Math.max(MIN_POPUP_WIDTH, Math.round(width)));
+  const rounded = Math.round(value);
+  if (Number.isNaN(rounded)) {
+    return minimum;
+  }
+  return Math.max(minimum, rounded);
 }
 
-function applyPopupWidth(width) {
-  const clamped = clampWidth(width);
+function clampSize(width, height) {
+  return {
+    width: clampDimension(width ?? window.outerWidth, MIN_POPUP_WIDTH),
+    height: clampDimension(height ?? window.outerHeight, MIN_POPUP_HEIGHT)
+  };
+}
+
+function applyPopupSize(width, height) {
+  const clamped = clampSize(width, height);
   try {
-    window.resizeTo(clamped, window.outerHeight);
+    window.resizeTo(clamped.width, clamped.height);
   } catch (error) {
     console.error('Failed to resize popup window', error);
   }
   return clamped;
 }
 
-async function restorePopupWidth() {
+async function restorePopupSize() {
   if (!resizeHandle) {
     return;
   }
@@ -48,38 +60,42 @@ async function restorePopupWidth() {
           resolve(items);
         }
       };
-      const maybePromise = storageArea.get(WIDTH_STORAGE_KEY, callback);
+      const maybePromise = storageArea.get([WIDTH_STORAGE_KEY, HEIGHT_STORAGE_KEY], callback);
       if (maybePromise && typeof maybePromise.then === 'function') {
         maybePromise.then(resolve).catch(reject);
       }
     });
     const width = stored?.[WIDTH_STORAGE_KEY];
-    if (typeof width === 'number') {
-      applyPopupWidth(width);
+    const height = stored?.[HEIGHT_STORAGE_KEY];
+    if (typeof width === 'number' || typeof height === 'number') {
+      applyPopupSize(width, height);
     }
   } catch (error) {
-    console.error('Failed to restore popup width', error);
+    console.error('Failed to restore popup size', error);
   }
 }
 
-function persistPopupWidth(width) {
+function persistPopupSize(width, height) {
   const storageArea = chrome?.storage?.local;
   if (!storageArea) {
     return;
   }
-  const clamped = clampWidth(width ?? window.outerWidth);
+  const { width: clampedWidth, height: clampedHeight } = clampSize(width, height);
   try {
-    const maybePromise = storageArea.set({ [WIDTH_STORAGE_KEY]: clamped }, () => {
-      const error = chrome.runtime?.lastError;
-      if (error) {
-        console.error('Failed to save popup width', error);
+    const maybePromise = storageArea.set(
+      { [WIDTH_STORAGE_KEY]: clampedWidth, [HEIGHT_STORAGE_KEY]: clampedHeight },
+      () => {
+        const error = chrome.runtime?.lastError;
+        if (error) {
+          console.error('Failed to save popup size', error);
+        }
       }
-    });
+    );
     if (maybePromise && typeof maybePromise.catch === 'function') {
-      maybePromise.catch((error) => console.error('Failed to save popup width', error));
+      maybePromise.catch((error) => console.error('Failed to save popup size', error));
     }
   } catch (error) {
-    console.error('Failed to save popup width', error);
+    console.error('Failed to save popup size', error);
   }
 }
 
@@ -111,8 +127,8 @@ function setupResizeHandle() {
       return;
     }
     const delta = event.screenX - startX;
-    const newWidth = clampWidth(startWidth + delta);
-    applyPopupWidth(newWidth);
+    const newWidth = clampDimension(startWidth + delta, MIN_POPUP_WIDTH);
+    applyPopupSize(newWidth, window.outerHeight);
   });
 
   function stopResizing(event) {
@@ -128,7 +144,7 @@ function setupResizeHandle() {
     ) {
       resizeHandle.releasePointerCapture(event.pointerId);
     }
-    persistPopupWidth(window.outerWidth);
+    persistPopupSize(window.outerWidth, window.outerHeight);
   }
 
   resizeHandle.addEventListener('pointerup', stopResizing);
@@ -140,7 +156,7 @@ function setupResizeHandle() {
     }
     isDragging = false;
     document.body.classList.remove('resizing');
-    persistPopupWidth(window.outerWidth);
+    persistPopupSize(window.outerWidth, window.outerHeight);
   });
 }
 
@@ -249,5 +265,5 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 loadLatestTranslation();
-restorePopupWidth();
+restorePopupSize();
 setupResizeHandle();
