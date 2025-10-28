@@ -10,14 +10,6 @@ const updatedAtElement = document.getElementById('updated-at');
 const resizeHandle = document.getElementById('resize-handle');
 
 const WIDTH_STORAGE_KEY = 'popupWidth';
-const LOCAL_STORAGE_FALLBACK = (() => {
-  try {
-    return window?.localStorage ?? null;
-  } catch (error) {
-    console.warn('Local storage is unavailable, falling back to async storage only.', error);
-    return null;
-  }
-})();
 const MIN_POPUP_WIDTH = 320;
 const MAX_POPUP_WIDTH = 800;
 
@@ -36,37 +28,6 @@ function applyPopupWidth(width) {
     console.error('Failed to resize popup window', error);
   }
   return clamped;
-}
-
-function readCachedPopupWidth() {
-  if (!LOCAL_STORAGE_FALLBACK) {
-    return null;
-  }
-  try {
-    const cached = LOCAL_STORAGE_FALLBACK.getItem(WIDTH_STORAGE_KEY);
-    if (!cached) {
-      return null;
-    }
-    const parsed = Number.parseInt(cached, 10);
-    if (!Number.isFinite(parsed)) {
-      return null;
-    }
-    return parsed;
-  } catch (error) {
-    console.warn('Failed to read cached popup width', error);
-    return null;
-  }
-}
-
-function cachePopupWidth(width) {
-  if (!LOCAL_STORAGE_FALLBACK) {
-    return;
-  }
-  try {
-    LOCAL_STORAGE_FALLBACK.setItem(WIDTH_STORAGE_KEY, String(width));
-  } catch (error) {
-    console.warn('Failed to cache popup width', error);
-  }
 }
 
 async function restorePopupWidth() {
@@ -94,8 +55,7 @@ async function restorePopupWidth() {
     });
     const width = stored?.[WIDTH_STORAGE_KEY];
     if (typeof width === 'number') {
-      const applied = applyPopupWidth(width);
-      cachePopupWidth(applied);
+      applyPopupWidth(width);
     }
   } catch (error) {
     console.error('Failed to restore popup width', error);
@@ -108,7 +68,6 @@ function persistPopupWidth(width) {
     return;
   }
   const clamped = clampWidth(width ?? window.outerWidth);
-  cachePopupWidth(clamped);
   try {
     const maybePromise = storageArea.set({ [WIDTH_STORAGE_KEY]: clamped }, () => {
       const error = chrome.runtime?.lastError;
@@ -290,9 +249,5 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 loadLatestTranslation();
-const cachedWidth = readCachedPopupWidth();
-if (typeof cachedWidth === 'number') {
-  applyPopupWidth(cachedWidth);
-}
 restorePopupWidth();
 setupResizeHandle();
