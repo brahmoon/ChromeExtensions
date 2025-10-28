@@ -11,16 +11,13 @@ const resizeHandle = document.getElementById('resize-handle');
 
 const WIDTH_STORAGE_KEY = 'popupWidth';
 const MIN_POPUP_WIDTH = 320;
+const MAX_POPUP_WIDTH = 800;
 
 function clampWidth(width) {
-  if (typeof width !== 'number' || !Number.isFinite(width)) {
+  if (typeof width !== 'number' || Number.isNaN(width)) {
     return MIN_POPUP_WIDTH;
   }
-  const rounded = Math.round(width);
-  if (Number.isNaN(rounded)) {
-    return MIN_POPUP_WIDTH;
-  }
-  return Math.max(MIN_POPUP_WIDTH, rounded);
+  return Math.min(MAX_POPUP_WIDTH, Math.max(MIN_POPUP_WIDTH, Math.round(width)));
 }
 
 function applyPopupWidth(width) {
