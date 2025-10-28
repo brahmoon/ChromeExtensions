@@ -1,6 +1,81 @@
 const MENU_ID = 'google-translate-selection';
 const TRANSLATION_ENDPOINT = 'https://translate.googleapis.com/translate_a/single';
 const TRANSLATION_PAGE_URL = chrome.runtime.getURL('popup.html');
+const WIDTH_STORAGE_KEY = 'popupWidth';
+const HEIGHT_STORAGE_KEY = 'popupHeight';
+const MIN_POPUP_WIDTH = 320;
+const MIN_POPUP_HEIGHT = 240;
+
+function clampDimension(value, minimum) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+  const rounded = Math.round(value);
+  if (Number.isNaN(rounded)) {
+    return null;
+  }
+  return Math.max(minimum, rounded);
+}
+
+async function getStoredPopupBounds() {
+  try {
+    const stored = await chrome.storage.local.get([WIDTH_STORAGE_KEY, HEIGHT_STORAGE_KEY]);
+    return {
+      width: clampDimension(stored?.[WIDTH_STORAGE_KEY], MIN_POPUP_WIDTH),
+      height: clampDimension(stored?.[HEIGHT_STORAGE_KEY], MIN_POPUP_HEIGHT)
+    };
+  } catch (_error) {
+    return { width: null, height: null };
+  }
+}
+
+async function storePopupBounds(bounds) {
+  const payload = {};
+  if (Object.prototype.hasOwnProperty.call(bounds, 'width')) {
+    const clampedWidth = clampDimension(bounds.width, MIN_POPUP_WIDTH);
+    if (clampedWidth != null) {
+      payload[WIDTH_STORAGE_KEY] = clampedWidth;
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(bounds, 'height')) {
+    const clampedHeight = clampDimension(bounds.height, MIN_POPUP_HEIGHT);
+    if (clampedHeight != null) {
+      payload[HEIGHT_STORAGE_KEY] = clampedHeight;
+    }
+  }
+
+  if (!Object.keys(payload).length) {
+    return;
+  }
+
+  try {
+    await chrome.storage.local.set(payload);
+  } catch (_error) {
+    // Ignore storage failures; bounds persistence is best-effort.
+  }
+}
+
+let translationWindowId = null;
+
+function rememberTranslationWindow(window) {
+  if (window?.id != null) {
+    translationWindowId = window.id;
+  }
+}
+
+async function createTranslationWindow() {
+  const { width, height } = await getStoredPopupBounds();
+  const options = { url: TRANSLATION_PAGE_URL, type: 'popup', focused: true };
+  if (width) {
+    options.width = width;
+  }
+  if (height) {
+    options.height = height;
+  }
+  const createdWindow = await chrome.windows.create(options);
+  rememberTranslationWindow(createdWindow);
+  return createdWindow;
+}
 
 async function findTranslationTab() {
   try {
@@ -11,6 +86,7 @@ async function findTranslationTab() {
     const [tab] = tabs;
     try {
       const window = await chrome.windows.get(tab.windowId);
+      rememberTranslationWindow(window);
       return { tab, window };
     } catch (_error) {
       return null;
@@ -43,13 +119,13 @@ async function focusOrCreateTranslationWindow() {
     return window;
   }
 
-  return chrome.windows.create({ url: TRANSLATION_PAGE_URL, type: 'popup', focused: true });
+  return createTranslationWindow();
 }
 
 async function toggleTranslationWindow() {
   const existing = await findTranslationTab();
   if (!existing) {
-    await chrome.windows.create({ url: TRANSLATION_PAGE_URL, type: 'popup', focused: true });
+    await createTranslationWindow();
     return;
   }
 
@@ -58,7 +134,7 @@ async function toggleTranslationWindow() {
     try {
       await chrome.windows.update(window.id, { state: 'normal', focused: true });
     } catch (_error) {
-      await chrome.windows.create({ url: TRANSLATION_PAGE_URL, type: 'popup', focused: true });
+      await createTranslationWindow();
       return;
     }
     if (tab) {
@@ -80,6 +156,35 @@ async function toggleTranslationWindow() {
 
 chrome.action.onClicked.addListener(() => {
   toggleTranslationWindow().catch(() => {});
+});
+
+chrome.windows.onRemoved.addListener((windowId) => {
+  if (translationWindowId === windowId) {
+    translationWindowId = null;
+  }
+});
+
+chrome.windows.onBoundsChanged.addListener(async (window) => {
+  if (!window || window.type !== 'popup' || window.id == null) {
+    return;
+  }
+
+  if (translationWindowId == null) {
+    const translation = await findTranslationTab();
+    if (!translation || translation.window?.id !== window.id) {
+      return;
+    }
+  }
+
+  if (window.id !== translationWindowId) {
+    return;
+  }
+
+  if (typeof window.width !== 'number' && typeof window.height !== 'number') {
+    return;
+  }
+
+  await storePopupBounds({ width: window.width, height: window.height });
 });
 
 chrome.runtime.onInstalled.addListener(() => {
