@@ -5,7 +5,9 @@
   "version": "1.0.0",
   "permissions": [
     "contextMenus",
-    "storage"
+    "storage",
+    "tabs",
+    "windows"
   ],
   "host_permissions": [
     "https://translate.googleapis.com/*"
@@ -14,7 +16,6 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Google翻訳",
-    "default_popup": "popup.html"
+    "default_title": "Google翻訳"
   }
 }
