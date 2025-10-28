@@ -1,6 +1,55 @@
 const MENU_ID = 'google-translate-selection';
 const TRANSLATION_ENDPOINT = 'https://translate.googleapis.com/translate_a/single';
 const TRANSLATION_PAGE_URL = chrome.runtime.getURL('popup.html');
+const WIDTH_STORAGE_KEY = 'popupWidth';
+const MIN_POPUP_WIDTH = 320;
+const MAX_POPUP_WIDTH = 800;
+
+function clampWidth(width) {
+  if (typeof width !== 'number' || Number.isNaN(width)) {
+    return null;
+  }
+  return Math.min(MAX_POPUP_WIDTH, Math.max(MIN_POPUP_WIDTH, Math.round(width)));
+}
+
+async function getStoredPopupWidth() {
+  try {
+    const { [WIDTH_STORAGE_KEY]: storedWidth } = await chrome.storage.local.get(WIDTH_STORAGE_KEY);
+    return clampWidth(storedWidth);
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function applyStoredWidthToWindow(windowId, width) {
+  if (!windowId) {
+    return null;
+  }
+
+  const desiredWidth = width ?? (await getStoredPopupWidth());
+  if (!desiredWidth) {
+    return null;
+  }
+
+  try {
+    return await chrome.windows.update(windowId, { width: desiredWidth });
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function createTranslationWindow() {
+  const width = await getStoredPopupWidth();
+  const options = { url: TRANSLATION_PAGE_URL, type: 'popup', focused: true };
+  if (width) {
+    options.width = width;
+  }
+  const createdWindow = await chrome.windows.create(options);
+  if (createdWindow?.id) {
+    await applyStoredWidthToWindow(createdWindow.id, width);
+  }
+  return createdWindow;
+}
 
 async function findTranslationTab() {
   try {
@@ -30,8 +79,9 @@ async function focusOrCreateTranslationWindow() {
     }
     try {
       await chrome.windows.update(window.id, updateInfo);
+      await applyStoredWidthToWindow(window.id);
     } catch (_error) {
-      return chrome.windows.create({ url: TRANSLATION_PAGE_URL, type: 'popup', focused: true });
+      return createTranslationWindow();
     }
     if (tab) {
       try {
@@ -43,13 +93,13 @@ async function focusOrCreateTranslationWindow() {
     return window;
   }
 
-  return chrome.windows.create({ url: TRANSLATION_PAGE_URL, type: 'popup', focused: true });
+  return createTranslationWindow();
 }
 
 async function toggleTranslationWindow() {
   const existing = await findTranslationTab();
   if (!existing) {
-    await chrome.windows.create({ url: TRANSLATION_PAGE_URL, type: 'popup', focused: true });
+    await createTranslationWindow();
     return;
   }
 
@@ -57,8 +107,9 @@ async function toggleTranslationWindow() {
   if (window?.state === 'minimized') {
     try {
       await chrome.windows.update(window.id, { state: 'normal', focused: true });
+      await applyStoredWidthToWindow(window.id);
     } catch (_error) {
-      await chrome.windows.create({ url: TRANSLATION_PAGE_URL, type: 'popup', focused: true });
+      await createTranslationWindow();
       return;
     }
     if (tab) {
