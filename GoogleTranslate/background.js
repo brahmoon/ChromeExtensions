@@ -1,5 +1,86 @@
 const MENU_ID = 'google-translate-selection';
 const TRANSLATION_ENDPOINT = 'https://translate.googleapis.com/translate_a/single';
+const TRANSLATION_PAGE_URL = chrome.runtime.getURL('popup.html');
+
+async function findTranslationTab() {
+  try {
+    const tabs = await chrome.tabs.query({ url: TRANSLATION_PAGE_URL });
+    if (!tabs.length) {
+      return null;
+    }
+    const [tab] = tabs;
+    try {
+      const window = await chrome.windows.get(tab.windowId);
+      return { tab, window };
+    } catch (_error) {
+      return null;
+    }
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function focusOrCreateTranslationWindow() {
+  const existing = await findTranslationTab();
+  if (existing) {
+    const { window, tab } = existing;
+    const updateInfo = { focused: true };
+    if (window?.state === 'minimized') {
+      updateInfo.state = 'normal';
+    }
+    try {
+      await chrome.windows.update(window.id, updateInfo);
+    } catch (_error) {
+      return chrome.windows.create({ url: TRANSLATION_PAGE_URL, type: 'popup', focused: true });
+    }
+    if (tab) {
+      try {
+        await chrome.tabs.update(tab.id, { active: true });
+      } catch (_error) {
+        // Ignore failures to activate the tab.
+      }
+    }
+    return window;
+  }
+
+  return chrome.windows.create({ url: TRANSLATION_PAGE_URL, type: 'popup', focused: true });
+}
+
+async function toggleTranslationWindow() {
+  const existing = await findTranslationTab();
+  if (!existing) {
+    await chrome.windows.create({ url: TRANSLATION_PAGE_URL, type: 'popup', focused: true });
+    return;
+  }
+
+  const { window, tab } = existing;
+  if (window?.state === 'minimized') {
+    try {
+      await chrome.windows.update(window.id, { state: 'normal', focused: true });
+    } catch (_error) {
+      await chrome.windows.create({ url: TRANSLATION_PAGE_URL, type: 'popup', focused: true });
+      return;
+    }
+    if (tab) {
+      try {
+        await chrome.tabs.update(tab.id, { active: true });
+      } catch (_error) {
+        // Ignore activation errors.
+      }
+    }
+    return;
+  }
+
+  try {
+    await chrome.windows.remove(window.id);
+  } catch (_error) {
+    // Window might already be gone; ignore errors.
+  }
+}
+
+chrome.action.onClicked.addListener(() => {
+  toggleTranslationWindow().catch(() => {});
+});
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
@@ -31,6 +112,7 @@ async function storeTranslation(data, origin = 'manual') {
   const payload = { ...data, origin };
   await chrome.storage.local.set({ latestTranslation: payload });
   chrome.runtime.sendMessage({ type: 'translationResult', data: payload });
+  await focusOrCreateTranslationWindow();
   return payload;
 }
 
