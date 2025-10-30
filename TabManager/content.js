@@ -112,6 +112,7 @@ function ensurePreviewOverlayElements() {
     display: none;
     padding: 24px;
     box-sizing: border-box;
+    overflow: hidden;
   `;
 
   const shadowRoot = container.attachShadow({ mode: 'open' });
@@ -135,13 +136,19 @@ function ensurePreviewOverlayElements() {
       color: #e8eaed;
       font-family: 'Noto Sans JP', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       width: 100%;
+      height: 100%;
       max-height: 100%;
+      display: flex;
+      flex: 1 1 auto;
+      align-items: stretch;
     }
 
     :host {
       display: flex;
       justify-content: flex-start;
       align-items: flex-start;
+      width: 100%;
+      height: 100%;
     }
 
     .overlay-shell[data-mode='placeholder'] {
@@ -152,11 +159,17 @@ function ensurePreviewOverlayElements() {
       position: relative;
       min-height: ${PREVIEW_OVERLAY_MIN_HEIGHT}px;
       background: #111;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
     }
 
     .overlay-frame {
       width: 100%;
-      height: clamp(${PREVIEW_OVERLAY_MIN_HEIGHT}px, 45vh, 540px);
+      height: 100%;
       border: none;
       display: block;
       background: #111;
@@ -170,7 +183,8 @@ function ensurePreviewOverlayElements() {
       gap: 12px;
       padding: 28px 18px;
       text-align: center;
-      min-height: clamp(${PREVIEW_OVERLAY_MIN_HEIGHT}px, 45vh, 540px);
+      width: 100%;
+      height: 100%;
       color: #9aa0a6;
       font-size: 13px;
     }
@@ -227,7 +241,7 @@ function ensurePreviewOverlayElements() {
 function buildPreviewSrcdoc(image, title) {
   const safeImage = escapeHtmlAttribute(image);
   const safeTitle = escapeHtmlAttribute(title);
-  return `<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><style>body{margin:0;background:#111;display:flex;align-items:center;justify-content:center;}img{width:100%;height:100%;object-fit:cover;}</style></head><body><img src="${safeImage}" alt="${safeTitle}"></body></html>`;
+  return `<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#111;display:flex;align-items:center;justify-content:center;}img{width:100%;height:100%;object-fit:contain;}</style></head><body><img src="${safeImage}" alt="${safeTitle}"></body></html>`;
 }
 
 function updatePreviewOverlayContent(detail = {}) {
@@ -274,6 +288,7 @@ function updatePreviewOverlayContent(detail = {}) {
   iframe.className = 'overlay-frame';
   iframe.setAttribute('sandbox', PREVIEW_OVERLAY_SANDBOX);
   iframe.setAttribute('title', `${title} のプレビュー`);
+  iframe.setAttribute('scrolling', 'no');
   iframe.srcdoc = buildPreviewSrcdoc(image, title);
 
   inner.appendChild(iframe);
