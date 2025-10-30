@@ -2,10 +2,7 @@
   "manifest_version": 3,
   "name": "TabManager",
   "version": "1.0",
-  "permissions": ["tabs", "activeTab", "scripting", "storage"],
-  "background": {
-    "service_worker": "background.js"
-  },
+  "permissions": ["tabs", "activeTab", "scripting"],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
   },
