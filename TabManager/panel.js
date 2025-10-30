@@ -1,37 +1,52 @@
-function createPlaceholderFavicon(tab) {
-  const span = document.createElement('span');
-  span.className = 'tab-favicon tab-favicon--placeholder';
-
-  const title = (tab.title || tab.url || '').trim();
-  const initial = title.charAt(0);
-  span.textContent = initial ? initial.toUpperCase() : '•';
-
-  return span;
-}
-
-function createFaviconElement(tab) {
-  const faviconUrl = tab.favIconUrl;
-  if (typeof faviconUrl === 'string' && faviconUrl.length > 0) {
-    const img = document.createElement('img');
-    img.className = 'tab-favicon';
-    img.src = faviconUrl;
-    img.alt = '';
-    img.loading = 'lazy';
-    img.referrerPolicy = 'no-referrer';
-    img.addEventListener('error', () => {
-      img.replaceWith(createPlaceholderFavicon(tab));
-    });
-    return img;
+function getIndicatorClass(tab, emaValue) {
+  if (tab.active) {
+    return 'status-active';
   }
 
-  return createPlaceholderFavicon(tab);
+  if (emaValue >= 0.35) {
+    return 'status-average';
+  }
+
+  if (emaValue >= 0.12) {
+    return 'status-low';
+  }
+
+  return 'status-idle';
+}
+
+async function fetchUsageMetrics() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'TabManagerGetUsageMetrics' });
+    if (response && Array.isArray(response.history) && response.ema && typeof response.ema === 'object') {
+      return {
+        history: response.history,
+        ema: response.ema,
+      };
+    }
+  } catch (error) {
+    console.error('Failed to fetch usage metrics:', error);
+  }
+
+  return {
+    history: [],
+    ema: {},
+  };
 }
 
 async function refreshTabs() {
-  const tabs = await chrome.tabs.query({});
+  const [tabs, metrics] = await Promise.all([
+    chrome.tabs.query({}),
+    fetchUsageMetrics()
+  ]);
 
   const list = document.getElementById('tab-list');
   list.innerHTML = '';
+
+  const historyCounts = {};
+  for (const tabId of metrics.history) {
+    const key = String(tabId);
+    historyCounts[key] = (historyCounts[key] || 0) + 1;
+  }
 
   for (const tab of tabs) {
     const li = document.createElement('li');
@@ -40,7 +55,11 @@ async function refreshTabs() {
       li.classList.add('is-active');
     }
 
-    const favicon = createFaviconElement(tab);
+    const indicator = document.createElement('span');
+    const emaValue = metrics.ema?.[String(tab.id)] || 0;
+    indicator.className = `tab-indicator ${getIndicatorClass(tab, emaValue)}`;
+    const viewCount = historyCounts[String(tab.id)] || 0;
+    indicator.title = `表示回数: ${viewCount}\nEMA: ${emaValue.toFixed(2)}`;
 
     const fullTitle = tab.title || '(no title)';
 
@@ -48,6 +67,10 @@ async function refreshTabs() {
     content.className = 'tab-text';
     content.textContent = fullTitle;
     content.title = fullTitle;
+
+    const meta = document.createElement('span');
+    meta.className = 'tab-meta';
+    meta.textContent = viewCount ? `×${viewCount}` : '';
 
     const closeButton = document.createElement('button');
     closeButton.className = 'tab-close-btn';
@@ -63,8 +86,9 @@ async function refreshTabs() {
       }
     });
 
-    li.appendChild(favicon);
+    li.appendChild(indicator);
     li.appendChild(content);
+    li.appendChild(meta);
     li.appendChild(closeButton);
     li.title = fullTitle;
 
@@ -92,6 +116,12 @@ function attachEventListeners() {
   chrome.tabs.onRemoved.addListener(refreshTabs);
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     if (changeInfo.status === 'complete' || changeInfo.title || changeInfo.url) {
+      refreshTabs();
+    }
+  });
+
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message?.type === 'TabManagerMetricsUpdated') {
       refreshTabs();
     }
   });
