@@ -245,28 +245,20 @@ function getPropertyPopover() {
 
 function openPropertyPopover() {
   const popover = getPropertyPopover();
-  const button = getPropertyButton();
   if (!popover || propertyPopoverOpen) {
     return;
   }
   popover.hidden = false;
   propertyPopoverOpen = true;
-  if (button) {
-    button.setAttribute('aria-expanded', 'true');
-  }
 }
 
 function closePropertyPopover() {
   const popover = getPropertyPopover();
-  const button = getPropertyButton();
   if (!popover || !propertyPopoverOpen) {
     return;
   }
   popover.hidden = true;
   propertyPopoverOpen = false;
-  if (button) {
-    button.setAttribute('aria-expanded', 'false');
-  }
 }
 
 function togglePropertyPopover(forceState) {
@@ -319,9 +311,6 @@ function handlePreviewToggleChange(event) {
 function setupPropertyControls() {
   const button = getPropertyButton();
   if (button) {
-    button.setAttribute('aria-haspopup', 'true');
-    button.setAttribute('aria-controls', PROPERTY_POPOVER_ID);
-    button.setAttribute('aria-expanded', propertyPopoverOpen ? 'true' : 'false');
     button.addEventListener('click', () => {
       togglePropertyPopover();
     });
