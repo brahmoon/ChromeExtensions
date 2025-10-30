@@ -61,17 +61,36 @@ async function refreshTabs() {
     const viewCount = historyCounts[String(tab.id)] || 0;
     indicator.title = `表示回数: ${viewCount}\nEMA: ${emaValue.toFixed(2)}`;
 
+    const fullTitle = tab.title || '(no title)';
+
     const content = document.createElement('div');
     content.className = 'tab-text';
-    content.textContent = tab.title || '(no title)';
+    content.textContent = fullTitle;
+    content.title = fullTitle;
 
     const meta = document.createElement('span');
     meta.className = 'tab-meta';
     meta.textContent = viewCount ? `×${viewCount}` : '';
 
+    const closeButton = document.createElement('button');
+    closeButton.className = 'tab-close-btn';
+    closeButton.type = 'button';
+    closeButton.textContent = '✕';
+    closeButton.title = 'タブを閉じる';
+    closeButton.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      try {
+        await chrome.tabs.remove(tab.id);
+      } catch (error) {
+        console.error('Failed to close tab:', error);
+      }
+    });
+
     li.appendChild(indicator);
     li.appendChild(content);
     li.appendChild(meta);
+    li.appendChild(closeButton);
+    li.title = fullTitle;
 
     li.addEventListener('click', async () => {
       await chrome.tabs.update(tab.id, { active: true });
