@@ -11,7 +11,6 @@ const PREVIEW_TOGGLE_ID = 'preview-toggle';
 const PROPERTY_BUTTON_ID = 'property-btn';
 const TAB_VIEW_ID = 'tab-view';
 const OPTIONS_VIEW_ID = 'options-view';
-const PREVIEW_LOADING_MESSAGE = 'プレビューを生成しています…';
 const PREVIEW_DEFAULT_MESSAGE = 'タブをホバーしてプレビューを表示';
 const PREVIEW_DISABLED_MESSAGE = '設定画面からプレビューを有効にしてください';
 const PREVIEW_UNAVAILABLE_MESSAGE = 'このタブのプレビュー画像は利用できません';
@@ -64,11 +63,10 @@ function createFaviconElement(tab) {
   return createPlaceholderFavicon(tab);
 }
 
-function renderPreviewPlaceholder(message, { loading = false } = {}) {
+function renderPreviewPlaceholder(message) {
   postToParentMessage(PREVIEW_OVERLAY_UPDATE_MESSAGE, {
     state: 'placeholder',
     message: typeof message === 'string' ? message : '',
-    loading: Boolean(loading),
   });
 }
 
@@ -142,11 +140,7 @@ function handlePreviewResponse(tab, response) {
   const tabId = tab.id;
 
   if (!response) {
-    if (previewUnavailableTabs.has(tabId)) {
-      renderPreviewPlaceholder(PREVIEW_UNAVAILABLE_MESSAGE);
-    } else {
-      renderPreviewPlaceholder(PREVIEW_LOADING_MESSAGE, { loading: true });
-    }
+    renderPreviewPlaceholder(PREVIEW_UNAVAILABLE_MESSAGE);
     return;
   }
 
@@ -169,11 +163,7 @@ function handlePreviewResponse(tab, response) {
   }
 
   if (response.status === 'queued') {
-    if (previewUnavailableTabs.has(tabId)) {
-      renderPreviewPlaceholder(PREVIEW_UNAVAILABLE_MESSAGE);
-    } else {
-      renderPreviewPlaceholder(PREVIEW_LOADING_MESSAGE, { loading: true });
-    }
+    renderPreviewPlaceholder(PREVIEW_UNAVAILABLE_MESSAGE);
   }
 }
 
@@ -193,11 +183,7 @@ function requestPreviewForTab(tab, { priority = false } = {}) {
       handlePreviewResponse(tab, response);
     })
     .catch(() => {
-      if (previewUnavailableTabs.has(tab.id)) {
-        renderPreviewPlaceholder(PREVIEW_UNAVAILABLE_MESSAGE);
-      } else {
-        renderPreviewPlaceholder(PREVIEW_LOADING_MESSAGE, { loading: true });
-      }
+      renderPreviewPlaceholder(PREVIEW_UNAVAILABLE_MESSAGE);
     });
 }
 
@@ -220,11 +206,7 @@ function handleTabHover(tab) {
     return;
   }
 
-  if (previewUnavailableTabs.has(tab.id)) {
-    renderPreviewPlaceholder(PREVIEW_UNAVAILABLE_MESSAGE);
-  } else {
-    renderPreviewPlaceholder(PREVIEW_LOADING_MESSAGE, { loading: true });
-  }
+  renderPreviewPlaceholder(PREVIEW_UNAVAILABLE_MESSAGE);
   requestPreviewForTab(tab, { priority: true });
 }
 

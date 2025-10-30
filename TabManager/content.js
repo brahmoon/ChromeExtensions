@@ -190,31 +190,8 @@ function ensurePreviewOverlayElements() {
       overflow: hidden;
     }
 
-    .overlay-placeholder.is-loading {
-      color: #bdc1c6;
-    }
-
     .overlay-placeholder p {
       margin: 0;
-    }
-
-    .overlay-spinner {
-      width: 32px;
-      height: 32px;
-      border: 3px solid rgba(255, 255, 255, 0.18);
-      border-top-color: rgba(138, 180, 248, 0.9);
-      border-radius: 50%;
-      animation: overlay-spin 1s linear infinite;
-    }
-
-    .overlay-placeholder:not(.is-loading) .overlay-spinner {
-      display: none;
-    }
-
-    @keyframes overlay-spin {
-      to {
-        transform: rotate(360deg);
-      }
     }
   `;
 
@@ -250,19 +227,11 @@ function updatePreviewOverlayContent(detail = {}) {
   const state = detail && detail.state;
 
   if (state !== 'image') {
-    const isLoading = Boolean(detail && detail.loading);
     const message = detail && typeof detail.message === 'string' ? detail.message : '';
     inner.innerHTML = '';
 
     const placeholder = document.createElement('div');
     placeholder.className = 'overlay-placeholder';
-    if (isLoading) {
-      placeholder.classList.add('is-loading');
-    }
-
-    const spinner = document.createElement('div');
-    spinner.className = 'overlay-spinner';
-    placeholder.appendChild(spinner);
 
     if (message) {
       const text = document.createElement('p');
@@ -271,14 +240,14 @@ function updatePreviewOverlayContent(detail = {}) {
     }
 
     inner.appendChild(placeholder);
-    shell.dataset.mode = isLoading ? 'loading' : 'placeholder';
-    shell.setAttribute('aria-busy', isLoading ? 'true' : 'false');
+    shell.dataset.mode = 'placeholder';
+    shell.setAttribute('aria-busy', 'false');
     return;
   }
 
   const image = typeof detail.image === 'string' ? detail.image : '';
   if (!image) {
-    updatePreviewOverlayContent({ state: 'placeholder', loading: false, message: '' });
+    updatePreviewOverlayContent({ state: 'placeholder', message: '' });
     return;
   }
 
