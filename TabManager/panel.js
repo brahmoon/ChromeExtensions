@@ -7,15 +7,30 @@ const PREVIEW_UPDATED_MESSAGE = 'TabManagerPreviewUpdated';
 const PREVIEW_REMOVED_MESSAGE = 'TabManagerPreviewRemoved';
 const PREVIEW_OVERLAY_UPDATE_MESSAGE = 'TabManagerPreviewOverlayUpdate';
 const PREVIEW_OVERLAY_VISIBILITY_MESSAGE = 'TabManagerPreviewOverlayVisibility';
+const PREVIEW_CLEAR_CACHE_MESSAGE = 'TabManagerClearPreviewCache';
 const PREVIEW_TOGGLE_ID = 'preview-toggle';
 const PROPERTY_BUTTON_ID = 'property-btn';
 const TAB_VIEW_ID = 'tab-view';
 const OPTIONS_VIEW_ID = 'options-view';
+const PREVIEW_CACHE_CLEAR_BUTTON_ID = 'preview-cache-clear-btn';
+const PREVIEW_CACHE_SIZE_ID = 'preview-cache-size';
 const PREVIEW_DEFAULT_MESSAGE = 'タブをホバーしてプレビューを表示';
 const PREVIEW_DISABLED_MESSAGE = '設定画面からプレビューを有効にしてください';
 const PREVIEW_UNAVAILABLE_MESSAGE = 'このタブのプレビュー画像は利用できません';
 const PREVIEW_REMOVAL_REASON_UNSUPPORTED = 'unsupported';
 const PREVIEW_RENDER_THROTTLE_MS = 150;
+
+const TAB_GROUP_COLORS = {
+  grey: '#5f6368',
+  blue: '#1a73e8',
+  red: '#d93025',
+  yellow: '#f9ab00',
+  green: '#188038',
+  pink: '#d81b60',
+  purple: '#9334e6',
+  cyan: '#12b5cb',
+  orange: '#fa7b17',
+};
 
 let previewEnabled = false;
 let previewCache = {};
@@ -70,6 +85,184 @@ function renderPreviewPlaceholder(message) {
   });
 }
 
+function resolveGroupColor(colorName) {
+  if (typeof colorName !== 'string') {
+    return TAB_GROUP_COLORS.grey;
+  }
+  return TAB_GROUP_COLORS[colorName] || TAB_GROUP_COLORS.grey;
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return '0 B';
+  }
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / Math.pow(1024, exponent);
+  return `${value.toFixed(value >= 10 || exponent === 0 ? 0 : 1)} ${units[exponent]}`;
+}
+
+function estimateBase64Size(base64) {
+  if (typeof base64 !== 'string' || base64.length === 0) {
+    return 0;
+  }
+  const commaIndex = base64.indexOf(',');
+  const raw = commaIndex >= 0 ? base64.slice(commaIndex + 1) : base64;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return 0;
+  }
+  const length = trimmed.length;
+  const padding = trimmed.endsWith('==') ? 2 : trimmed.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((length * 3) / 4) - padding);
+}
+
+function calculatePreviewCacheSizeBytes(cache = previewCache) {
+  if (!cache || typeof cache !== 'object') {
+    return 0;
+  }
+  let total = 0;
+  for (const value of Object.values(cache)) {
+    if (value && typeof value.image === 'string') {
+      total += estimateBase64Size(value.image);
+    }
+  }
+  return total;
+}
+
+function updatePreviewCacheSizeDisplay() {
+  const sizeElement = document.getElementById(PREVIEW_CACHE_SIZE_ID);
+  const button = document.getElementById(PREVIEW_CACHE_CLEAR_BUTTON_ID);
+  if (!sizeElement) {
+    return;
+  }
+  const bytes = calculatePreviewCacheSizeBytes();
+  sizeElement.textContent = formatBytes(bytes);
+  if (button) {
+    button.disabled = bytes === 0;
+  }
+}
+
+function createTabListItem(tab) {
+  const li = document.createElement('li');
+  li.className = 'tab-item';
+  if (tab.active) {
+    li.classList.add('is-active');
+  }
+
+  if (typeof tab.id === 'number') {
+    li.dataset.tabId = String(tab.id);
+  }
+
+  const favicon = createFaviconElement(tab);
+
+  const fullTitle = tab.title || '(no title)';
+
+  const content = document.createElement('div');
+  content.className = 'tab-text';
+  content.textContent = fullTitle;
+  content.title = fullTitle;
+
+  const closeButton = document.createElement('button');
+  closeButton.className = 'tab-close-btn';
+  closeButton.type = 'button';
+  closeButton.textContent = '✕';
+  closeButton.title = 'タブを閉じる';
+  closeButton.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    try {
+      await chrome.tabs.remove(tab.id);
+    } catch (error) {
+      console.error('Failed to close tab:', error);
+    }
+  });
+
+  li.appendChild(favicon);
+  li.appendChild(content);
+  li.appendChild(closeButton);
+  li.title = fullTitle;
+
+  li.addEventListener('mouseenter', () => {
+    handleTabHover(tab);
+  });
+
+  li.addEventListener('mouseleave', () => {
+    if (typeof tab.id === 'number') {
+      handleTabLeave(tab.id);
+    }
+  });
+
+  li.addEventListener('click', async () => {
+    try {
+      await chrome.tabs.update(tab.id, { active: true });
+      if (typeof tab.windowId === 'number') {
+        await chrome.windows.update(tab.windowId, { focused: true });
+      }
+    } catch (error) {
+      console.error('Failed to activate tab:', error);
+    }
+  });
+
+  return li;
+}
+
+function createGroupAccordion(groupId, groupInfo, tabs) {
+  if (!Array.isArray(tabs) || tabs.length === 0) {
+    return null;
+  }
+
+  const listId = `tab-group-${groupId}`;
+  const expandedByDefault = groupInfo?.collapsed ? false : true;
+  const titleText = (groupInfo?.title || '').trim() || `グループ ${groupId}`;
+  const color = resolveGroupColor(groupInfo?.color);
+
+  const item = document.createElement('li');
+  item.className = 'group-item';
+  item.dataset.groupId = String(groupId);
+
+  const tabList = document.createElement('ul');
+  tabList.className = 'group-tab-list';
+  tabList.id = listId;
+  tabList.hidden = !expandedByDefault;
+
+  for (const tab of tabs) {
+    tabList.appendChild(createTabListItem(tab));
+  }
+
+  const headerButton = document.createElement('button');
+  headerButton.type = 'button';
+  headerButton.className = 'group-header';
+  headerButton.setAttribute('aria-expanded', expandedByDefault ? 'true' : 'false');
+  headerButton.setAttribute('aria-controls', listId);
+
+  const colorIndicator = document.createElement('span');
+  colorIndicator.className = 'group-color-indicator';
+  colorIndicator.style.backgroundColor = color;
+
+  const title = document.createElement('span');
+  title.className = 'group-title';
+  title.textContent = titleText;
+
+  const count = document.createElement('span');
+  count.className = 'group-count';
+  count.textContent = `(${tabs.length})`;
+
+  headerButton.appendChild(colorIndicator);
+  headerButton.appendChild(title);
+  headerButton.appendChild(count);
+
+  headerButton.addEventListener('click', () => {
+    const expanded = headerButton.getAttribute('aria-expanded') === 'true';
+    const nextExpanded = !expanded;
+    headerButton.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
+    tabList.hidden = !nextExpanded;
+  });
+
+  item.appendChild(headerButton);
+  item.appendChild(tabList);
+  return item;
+}
+
 function renderPreviewImage(preview, tab) {
   const { image } = preview || {};
   if (typeof image !== 'string' || image.length === 0) {
@@ -101,10 +294,12 @@ function updatePreviewCacheFromStorage(storageValue) {
   if (!storageValue || typeof storageValue !== 'object') {
     previewCache = {};
     previewUnavailableTabs.clear();
+    updatePreviewCacheSizeDisplay();
     return;
   }
   previewCache = { ...storageValue };
   previewUnavailableTabs.clear();
+  updatePreviewCacheSizeDisplay();
 }
 
 function updatePreviewToggleUI() {
@@ -152,6 +347,7 @@ function handlePreviewResponse(tab, response) {
     }
     previewUnavailableTabs.delete(tabId);
     previewCache[String(tab.id)] = response.preview;
+    updatePreviewCacheSizeDisplay();
     schedulePreviewRender(response.preview, tab);
     return;
   }
@@ -315,6 +511,27 @@ function handlePreviewToggleChange(event) {
     .catch(() => {});
 }
 
+async function handlePreviewCacheClear(event) {
+  const button = event?.currentTarget;
+  if (!button || typeof button.disabled !== 'boolean') {
+    return;
+  }
+  if (button.disabled) {
+    return;
+  }
+  button.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: PREVIEW_CLEAR_CACHE_MESSAGE });
+    if (!response?.ok) {
+      throw new Error(response?.error || 'Failed to clear preview cache');
+    }
+  } catch (error) {
+    console.error('Failed to clear preview cache:', error);
+  } finally {
+    updatePreviewCacheSizeDisplay();
+  }
+}
+
 function setupOptionsControls() {
   const button = getPropertyButton();
   if (button) {
@@ -329,6 +546,12 @@ function setupOptionsControls() {
   const toggle = document.getElementById(PREVIEW_TOGGLE_ID);
   if (toggle) {
     toggle.addEventListener('change', handlePreviewToggleChange);
+  }
+
+  const clearButton = document.getElementById(PREVIEW_CACHE_CLEAR_BUTTON_ID);
+  if (clearButton) {
+    clearButton.addEventListener('click', handlePreviewCacheClear);
+    clearButton.disabled = calculatePreviewCacheSizeBytes() === 0;
   }
 
   window.addEventListener('keydown', handleKeydown);
@@ -346,6 +569,7 @@ async function initializePreviewState() {
     applyPreviewSettings(Boolean(stored[PREVIEW_ENABLED_STORAGE_KEY]), { skipRefresh: true });
   } catch (error) {
     previewCache = {};
+    updatePreviewCacheSizeDisplay();
     applyPreviewSettings(true, { skipRefresh: true });
   }
 
@@ -360,71 +584,67 @@ async function refreshTabs() {
   const tabs = await chrome.tabs.query({});
 
   const list = document.getElementById('tab-list');
+  if (!list) {
+    return;
+  }
   list.innerHTML = '';
 
   const tabIdsForQueue = [];
+
+  const groupMap = new Map();
+  const structure = [];
 
   for (const tab of tabs) {
     if (typeof tab.id === 'number') {
       tabIdsForQueue.push(tab.id);
     }
 
-    const li = document.createElement('li');
-    li.className = 'tab-item';
-    if (tab.active) {
-      li.classList.add('is-active');
+    if (typeof tab.groupId === 'number' && tab.groupId >= 0) {
+      let groupEntry = groupMap.get(tab.groupId);
+      if (!groupEntry) {
+        groupEntry = { tabs: [], info: null };
+        groupMap.set(tab.groupId, groupEntry);
+        structure.push({ type: 'group', groupId: tab.groupId });
+      }
+      groupEntry.tabs.push(tab);
+    } else {
+      structure.push({ type: 'tab', tab });
+    }
+  }
+
+  if (groupMap.size > 0 && chrome?.tabGroups?.get) {
+    await Promise.all(
+      Array.from(groupMap.entries()).map(async ([groupId, entry]) => {
+        try {
+          entry.info = await chrome.tabGroups.get(groupId);
+        } catch (error) {
+          console.debug('Failed to retrieve tab group info:', error);
+          entry.info = null;
+        }
+      })
+    );
+  }
+
+  for (const item of structure) {
+    if (item.type === 'tab') {
+      list.appendChild(createTabListItem(item.tab));
+      continue;
     }
 
-    if (typeof tab.id === 'number') {
-      li.dataset.tabId = String(tab.id);
+    if (item.type === 'group') {
+      const entry = groupMap.get(item.groupId);
+      if (!entry || entry.tabs.length === 0) {
+        continue;
+      }
+      const groupElement = createGroupAccordion(item.groupId, entry.info, entry.tabs);
+      if (groupElement) {
+        list.appendChild(groupElement);
+      } else {
+        entry.tabs.forEach((tab) => {
+          list.appendChild(createTabListItem(tab));
+        });
+      }
     }
-
-    const favicon = createFaviconElement(tab);
-
-    const fullTitle = tab.title || '(no title)';
-
-    const content = document.createElement('div');
-    content.className = 'tab-text';
-    content.textContent = fullTitle;
-    content.title = fullTitle;
-
-    const closeButton = document.createElement('button');
-    closeButton.className = 'tab-close-btn';
-    closeButton.type = 'button';
-    closeButton.textContent = '✕';
-    closeButton.title = 'タブを閉じる';
-    closeButton.addEventListener('click', async (event) => {
-      event.stopPropagation();
-      try {
-        await chrome.tabs.remove(tab.id);
-      } catch (error) {
-        console.error('Failed to close tab:', error);
-      }
-    });
-
-    li.appendChild(favicon);
-    li.appendChild(content);
-    li.appendChild(closeButton);
-    li.title = fullTitle;
-
-    li.addEventListener('mouseenter', () => {
-      handleTabHover(tab);
-    });
-
-    li.addEventListener('mouseleave', () => {
-      if (typeof tab.id === 'number') {
-        handleTabLeave(tab.id);
-      }
-    });
-
-    li.addEventListener('click', async () => {
-      await chrome.tabs.update(tab.id, { active: true });
-      if (typeof tab.windowId === 'number') {
-        await chrome.windows.update(tab.windowId, { focused: true });
-      }
-    });
-
-    list.appendChild(li);
   }
 
   syncPreviewQueue(tabIdsForQueue);
@@ -484,6 +704,7 @@ chrome.runtime.onMessage.addListener((message) => {
     }
 
     previewCache[String(tabId)] = preview;
+    updatePreviewCacheSizeDisplay();
     previewUnavailableTabs.delete(tabId);
 
     if (!previewEnabled || tabId !== activePreviewTabId) {
@@ -511,6 +732,7 @@ chrome.runtime.onMessage.addListener((message) => {
       return;
     }
     delete previewCache[String(tabId)];
+    updatePreviewCacheSizeDisplay();
 
     const reason = typeof message.reason === 'string' ? message.reason : '';
     previewUnavailableTabs.delete(tabId);

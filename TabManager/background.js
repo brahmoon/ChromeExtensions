@@ -6,6 +6,7 @@ const PREVIEW_SYNC_MESSAGE = 'TabManagerSyncPreviewOrder';
 const PREVIEW_SET_ENABLED_MESSAGE = 'TabManagerSetPreviewEnabled';
 const PREVIEW_UPDATED_MESSAGE = 'TabManagerPreviewUpdated';
 const PREVIEW_REMOVED_MESSAGE = 'TabManagerPreviewRemoved';
+const PREVIEW_CLEAR_CACHE_MESSAGE = 'TabManagerClearPreviewCache';
 const PREVIEW_CAPTURE_OPTIONS = { format: 'jpeg', quality: 45 };
 const PREVIEW_QUEUE_DELAY_MS = 800;
 const PREVIEW_RETRY_DELAY_MS = 4000;
@@ -15,7 +16,7 @@ const EXTENSION_ELEMENT_ATTRIBUTE = 'data-tab-manager-element';
 const PREVIEW_REMOVAL_REASON_UNSUPPORTED = 'unsupported';
 const PREVIEW_REMOVAL_REASON_CLOSED = 'closed';
 const PREVIEW_REMOVAL_REASON_REFRESHED = 'refreshed';
-const PREVIEW_REMOVAL_REASON_DISABLED = 'disabled';
+const PREVIEW_REMOVAL_REASON_CLEARED = 'cleared';
 
 const panelStorageArea = chrome.storage.session ?? chrome.storage.local;
 
@@ -283,6 +284,36 @@ async function removePreview(tabId, { reason } = {}) {
   if (hadPreview || reason) {
     notifyPreviewRemoved(tabId, reason);
   }
+}
+
+async function clearPreviewCache() {
+  if (previewData.size === 0) {
+    return { cleared: 0 };
+  }
+
+  const removedTabIds = Array.from(previewData.keys());
+  previewQueue = [];
+  previewQueueSet.clear();
+  previewRetryTimeouts.forEach((timeout) => clearTimeout(timeout));
+  previewRetryTimeouts.clear();
+  unavailablePreviews.clear();
+  previewData.clear();
+  await persistPreviewData();
+
+  removedTabIds.forEach((tabId) => {
+    notifyPreviewRemoved(tabId, PREVIEW_REMOVAL_REASON_CLEARED);
+  });
+
+  if (previewEnabled) {
+    queueAllOpenTabs({ prioritizeActive: true }).catch((error) => {
+      console.error('Failed to enqueue previews after cache clear:', error);
+    });
+    processPreviewQueue().catch((error) => {
+      console.error('Failed to restart preview queue after cache clear:', error);
+    });
+  }
+
+  return { cleared: removedTabIds.length };
 }
 
 function shouldSkipPreviewForUrl(url) {
@@ -603,21 +634,15 @@ async function setPreviewEnabled(enabled) {
     previewRetryTimeouts.forEach((timeout) => clearTimeout(timeout));
     previewRetryTimeouts.clear();
     unavailablePreviews.clear();
-    const removedTabIds = Array.from(previewData.keys());
-    previewData.clear();
-    await persistPreviewData();
-    removedTabIds.forEach((tabId) => {
-      notifyPreviewRemoved(tabId, PREVIEW_REMOVAL_REASON_DISABLED);
-    });
     return;
-  } else {
-    queueAllOpenTabs({ prioritizeActive: true }).catch((error) => {
-      console.error('Failed to enqueue previews after enabling:', error);
-    });
-    processPreviewQueue().catch((error) => {
-      console.error('Failed to start preview queue after enabling:', error);
-    });
   }
+
+  queueAllOpenTabs({ prioritizeActive: true }).catch((error) => {
+    console.error('Failed to enqueue previews after enabling:', error);
+  });
+  processPreviewQueue().catch((error) => {
+    console.error('Failed to start preview queue after enabling:', error);
+  });
 }
 
 async function sendPanelCommand(tabId, type) {
@@ -764,6 +789,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       })
       .catch((error) => {
         console.error('Failed to update preview preference:', error);
+        sendResponse({ ok: false, error: String(error?.message || error) });
+      });
+    return true;
+  }
+
+  if (message.type === PREVIEW_CLEAR_CACHE_MESSAGE) {
+    ensurePreviewStateReady()
+      .then(() => clearPreviewCache())
+      .then((result) => {
+        sendResponse({ ok: true, ...result });
+      })
+      .catch((error) => {
+        console.error('Failed to clear preview cache:', error);
         sendResponse({ ok: false, error: String(error?.message || error) });
       });
     return true;
