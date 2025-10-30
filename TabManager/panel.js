@@ -38,6 +38,10 @@ const previewUnavailableTabs = new Set();
 let activePreviewTabId = null;
 let previewRenderTimeout = null;
 let optionsViewOpen = false;
+const scrollState = {
+  pendingBehavior: { type: 'center-active' },
+  lastKnownScrollTop: 0,
+};
 
 function postToParentMessage(type, detail = {}) {
   if (window.parent && window.parent !== window) {
@@ -477,6 +481,74 @@ function getTabView() {
   return document.getElementById(TAB_VIEW_ID);
 }
 
+function getTabListElement() {
+  return document.getElementById('tab-list');
+}
+
+function clamp(value, min, max) {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+  if (value < min) {
+    return min;
+  }
+  if (value > max) {
+    return max;
+  }
+  return value;
+}
+
+function rememberCurrentScrollPosition() {
+  const list = getTabListElement();
+  if (!list) {
+    return;
+  }
+  scrollState.lastKnownScrollTop = list.scrollTop;
+  if (!scrollState.pendingBehavior || scrollState.pendingBehavior.type !== 'center-active') {
+    scrollState.pendingBehavior = {
+      type: 'restore',
+      scrollTop: list.scrollTop,
+    };
+  }
+}
+
+function applyPendingScrollBehavior() {
+  const list = getTabListElement();
+  if (!list) {
+    return;
+  }
+
+  const behavior = scrollState.pendingBehavior || { type: 'restore' };
+  let targetScrollTop = scrollState.lastKnownScrollTop || 0;
+
+  if (behavior.type === 'center-active') {
+    const activeItem = list.querySelector('.tab-item.is-active');
+    if (activeItem) {
+      const listRect = list.getBoundingClientRect();
+      const itemRect = activeItem.getBoundingClientRect();
+      const relativeTop = itemRect.top - listRect.top + list.scrollTop;
+      const desiredTop = relativeTop - Math.max(0, (list.clientHeight - itemRect.height) / 2);
+      const maxScroll = Math.max(0, list.scrollHeight - list.clientHeight);
+      targetScrollTop = clamp(desiredTop, 0, maxScroll);
+    } else {
+      targetScrollTop = clamp(targetScrollTop, 0, Math.max(0, list.scrollHeight - list.clientHeight));
+    }
+  } else if (behavior.type === 'restore') {
+    if (Number.isFinite(behavior.scrollTop)) {
+      targetScrollTop = behavior.scrollTop;
+    }
+    const maxScroll = Math.max(0, list.scrollHeight - list.clientHeight);
+    targetScrollTop = clamp(targetScrollTop, 0, maxScroll);
+  }
+
+  list.scrollTop = targetScrollTop;
+  scrollState.lastKnownScrollTop = list.scrollTop;
+  scrollState.pendingBehavior = {
+    type: 'restore',
+    scrollTop: list.scrollTop,
+  };
+}
+
 function applyOptionsViewState() {
   const tabView = getTabView();
   if (tabView) {
@@ -581,9 +653,11 @@ async function initializePreviewState() {
 }
 
 async function refreshTabs() {
+  rememberCurrentScrollPosition();
+
   const tabs = await chrome.tabs.query({});
 
-  const list = document.getElementById('tab-list');
+  const list = getTabListElement();
   if (!list) {
     return;
   }
@@ -648,6 +722,10 @@ async function refreshTabs() {
   }
 
   syncPreviewQueue(tabIdsForQueue);
+
+  requestAnimationFrame(() => {
+    applyPendingScrollBehavior();
+  });
 }
 
 function attachEventListeners() {
@@ -657,6 +735,19 @@ function attachEventListeners() {
       console.error('Failed to notify background about panel close:', error);
     });
   });
+
+  const list = getTabListElement();
+  if (list) {
+    list.addEventListener('scroll', () => {
+      scrollState.lastKnownScrollTop = list.scrollTop;
+      if (!scrollState.pendingBehavior || scrollState.pendingBehavior.type !== 'center-active') {
+        scrollState.pendingBehavior = {
+          type: 'restore',
+          scrollTop: list.scrollTop,
+        };
+      }
+    });
+  }
 
   chrome.tabs.onActivated.addListener(refreshTabs);
   chrome.tabs.onCreated.addListener(refreshTabs);
