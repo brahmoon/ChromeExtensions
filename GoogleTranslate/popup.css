@@ -37,6 +37,33 @@ form {
   gap: 8px;
 }
 
+.language-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.language-control {
+  flex: 1 1 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.language-control select {
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid #d2d6dc;
+  font-size: 13px;
+  background-color: #fff;
+}
+
+.language-control select:focus {
+  outline: none;
+  border-color: #1a73e8;
+  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+
 label {
   font-weight: 600;
   font-size: 13px;
@@ -108,10 +135,37 @@ textarea:focus {
 
 .value {
   flex: 1;
+  white-space: pre-wrap;
 }
 
-.value.translated {
-  white-space: pre-wrap;
+.value .newline-token {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 2px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(26, 115, 232, 0.12);
+  color: #1a73e8;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.value .newline-token[data-type='cr'] {
+  background: rgba(255, 140, 0, 0.14);
+  color: #c26400;
+}
+
+.value .newline-token[data-type='lf'] {
+  background: rgba(0, 170, 136, 0.14);
+  color: #00796b;
+}
+
+.value .newline-token[data-type='crlf'] {
+  background: rgba(26, 115, 232, 0.16);
+  color: #1a73e8;
 }
 
 .status {
