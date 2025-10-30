@@ -9,20 +9,40 @@
   <header>
     <div class="header-left">
       <h2>Tab Manager</h2>
-      <button id="property-btn" type="button" title="プロパティ">⚙</button>
+      <button
+        id="property-btn"
+        type="button"
+        title="設定"
+        aria-expanded="false"
+        aria-controls="options-view"
+      >⚙</button>
     </div>
     <button id="close-btn">&gt;</button>
   </header>
-  <div id="property-popover" hidden>
-    <div class="property-row">
-      <label>
-        <input type="checkbox" id="preview-toggle">
-        プレビューを有効にする
-      </label>
-    </div>
-  </div>
   <div id="panel-content">
-    <ul id="tab-list"></ul>
+    <section id="tab-view" class="panel-view" aria-labelledby="tab-view-heading">
+      <h3 id="tab-view-heading" class="visually-hidden">タブ一覧</h3>
+      <ul id="tab-list"></ul>
+    </section>
+    <section
+      id="options-view"
+      class="panel-view"
+      aria-labelledby="options-heading"
+      hidden
+    >
+      <div class="options-header">
+        <h3 id="options-heading">設定</h3>
+      </div>
+      <div class="options-body">
+        <label class="option-row">
+          <input type="checkbox" id="preview-toggle">
+          <span>プレビューを有効にする</span>
+        </label>
+        <p class="option-description">
+          プレビューを無効にするとタブのスクリーンショットは保存されません。
+        </p>
+      </div>
+    </section>
   </div>
   <script src="panel.js"></script>
 </body>
