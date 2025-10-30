@@ -243,6 +243,14 @@ function getPropertyPopover() {
   return document.getElementById(PROPERTY_POPOVER_ID);
 }
 
+function setPropertyButtonExpanded(expanded) {
+  const button = getPropertyButton();
+  if (!button) {
+    return;
+  }
+  button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+}
+
 function openPropertyPopover() {
   const popover = getPropertyPopover();
   if (!popover || propertyPopoverOpen) {
@@ -250,6 +258,7 @@ function openPropertyPopover() {
   }
   popover.hidden = false;
   propertyPopoverOpen = true;
+  setPropertyButtonExpanded(true);
 }
 
 function closePropertyPopover() {
@@ -259,6 +268,7 @@ function closePropertyPopover() {
   }
   popover.hidden = true;
   propertyPopoverOpen = false;
+  setPropertyButtonExpanded(false);
 }
 
 function togglePropertyPopover(forceState) {
@@ -311,7 +321,10 @@ function handlePreviewToggleChange(event) {
 function setupPropertyControls() {
   const button = getPropertyButton();
   if (button) {
-    button.addEventListener('click', () => {
+    setPropertyButtonExpanded(propertyPopoverOpen);
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       togglePropertyPopover();
     });
   }
