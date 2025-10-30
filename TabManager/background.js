@@ -687,7 +687,7 @@ async function openPanelOnTab(tabId) {
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   await Promise.all([ensurePanelStateReady(), ensurePreviewStateReady()]);
 
-  if (previewEnabled) {
+  if (previewEnabled && !previewData.has(tabId) && !unavailablePreviews.has(tabId)) {
     enqueuePreview(tabId, { priority: true });
   }
 
@@ -797,7 +797,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (preview && typeof preview.image === 'string') {
         unavailablePreviews.delete(tabId);
         sendResponse({ status: 'ready', preview });
-        enqueuePreview(tabId, { priority: Boolean(message.priority) });
         return;
       }
 
