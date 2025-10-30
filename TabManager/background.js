@@ -532,8 +532,6 @@ async function queueAllOpenTabs({ prioritizeActive = false } = {}) {
     return;
   }
 
-  const activeTabIds = new Set();
-
   for (const tab of tabs) {
     if (typeof tab?.id !== 'number') {
       continue;
@@ -544,20 +542,12 @@ async function queueAllOpenTabs({ prioritizeActive = false } = {}) {
       continue;
     }
 
-    const priority = prioritizeActive && Boolean(tab.active);
-    if (priority) {
-      activeTabIds.add(tab.id);
+    if (!tab.active || previewData.has(tab.id)) {
+      continue;
     }
 
+    const priority = prioritizeActive && Boolean(tab.active);
     enqueuePreview(tab.id, { priority });
-  }
-
-  if (!prioritizeActive || activeTabIds.size === 0) {
-    return;
-  }
-
-  for (const tabId of activeTabIds) {
-    moveTabToQueueFront(tabId);
   }
 }
 
@@ -572,11 +562,12 @@ function syncPreviewOrder(tabIds) {
   }
 
   const existingQueue = previewQueue.slice();
+  const existingQueueSet = new Set(existingQueue);
   previewQueue = [];
   previewQueueSet.clear();
 
   for (const tabId of normalised) {
-    if (previewData.has(tabId)) {
+    if (!existingQueueSet.has(tabId)) {
       continue;
     }
     if (!previewQueueSet.has(tabId)) {
@@ -687,7 +678,7 @@ async function openPanelOnTab(tabId) {
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   await Promise.all([ensurePanelStateReady(), ensurePreviewStateReady()]);
 
-  if (previewEnabled) {
+  if (previewEnabled && !previewData.has(tabId)) {
     enqueuePreview(tabId, { priority: true });
   }
 
@@ -722,7 +713,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     await removePreview(tabId, { reason: PREVIEW_REMOVAL_REASON_REFRESHED });
   }
 
-  if ((changeInfo.status === 'complete' || changeInfo.url) && tab && tab.active) {
+  if ((changeInfo.status === 'complete' || changeInfo.url) && tab && tab.active && !previewData.has(tabId)) {
     enqueuePreview(tabId, { priority: true });
   }
 });
@@ -797,11 +788,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (preview && typeof preview.image === 'string') {
         unavailablePreviews.delete(tabId);
         sendResponse({ status: 'ready', preview });
-        enqueuePreview(tabId, { priority: Boolean(message.priority) });
         return;
       }
 
-      enqueuePreview(tabId, { priority: Boolean(message.priority) });
       sendResponse({ status: 'queued' });
     })().catch((error) => {
       console.error('Failed to handle preview request:', error);
