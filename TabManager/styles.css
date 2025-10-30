@@ -1,10 +1,19 @@
 body {
+  --collapse-handle-diameter: 72px;
+  --collapse-handle-radius: calc(var(--collapse-handle-diameter) / 2);
+  --collapse-handle-gap: 2px;
+  --collapse-handle-offset: calc(var(--collapse-handle-radius) + var(--collapse-handle-gap));
+
   margin: 0;
   font-family: sans-serif;
   background-color: #202124;
   color: #eee;
   height: 100%;
   overflow: auto;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
 }
 
 header {
@@ -20,9 +29,84 @@ header {
   transition: padding 0.25s ease, box-shadow 0.25s ease;
 }
 
-body {
+.panel-shell {
   display: flex;
+  flex: 1;
   flex-direction: column;
+  min-height: 100%;
+  width: calc(100% - var(--collapse-handle-offset));
+  margin-left: var(--collapse-handle-offset);
+  min-width: 0;
+}
+
+.collapse-handle {
+  position: fixed;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  width: var(--collapse-handle-offset);
+  height: var(--collapse-handle-diameter);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 10px 0 0;
+  color: #eee;
+  background: none;
+  border: none;
+  cursor: pointer;
+  z-index: 2;
+  transition: color 0.2s ease;
+  --collapse-handle-surface: #303134;
+}
+
+.collapse-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--collapse-handle-radius);
+  border-radius: var(--collapse-handle-radius) 0 0 var(--collapse-handle-radius);
+  background:
+    radial-gradient(
+      circle at 100% 50%,
+      var(--collapse-handle-surface) 0 calc(var(--collapse-handle-radius) - 1px),
+      transparent calc(var(--collapse-handle-radius) - 1px)
+    ),
+    radial-gradient(
+      circle at 100% 50%,
+      transparent 0 calc(var(--collapse-handle-radius) - 1px),
+      #444 calc(var(--collapse-handle-radius) - 1px),
+      #444 calc(var(--collapse-handle-radius)),
+      transparent calc(var(--collapse-handle-radius))
+    );
+  background-repeat: no-repeat;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  transition: background 0.2s ease;
+}
+
+.collapse-handle:focus-visible {
+  outline: none;
+}
+
+.collapse-handle:hover,
+.collapse-handle:focus-visible {
+  color: #fff;
+  --collapse-handle-surface: #3a3c40;
+}
+
+.collapse-handle__icon {
+  position: relative;
+  z-index: 1;
+  font-size: 22px;
+  line-height: 1;
+  transition: transform 0.2s ease;
+}
+
+.collapse-handle:hover .collapse-handle__icon,
+.collapse-handle:focus-visible .collapse-handle__icon {
+  transform: translateX(2px);
 }
 
 header.is-compact {
