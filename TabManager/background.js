@@ -276,6 +276,74 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function toggleTabManagerVisibility(tabId, hidden) {
+  if (typeof tabId !== 'number') {
+    return;
+  }
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (shouldHide) => {
+        const elements = [
+          document.getElementById('tab-manager-panel'),
+          document.getElementById('tab-manager-toggle'),
+          document.getElementById('tab-manager-preview-overlay'),
+        ];
+
+        for (const element of elements) {
+          if (!element) {
+            continue;
+          }
+
+          if (shouldHide) {
+            const previousStyle = element.getAttribute('style');
+            if (previousStyle != null) {
+              element.setAttribute('data-tab-manager-capture-style', previousStyle);
+            } else {
+              element.removeAttribute('data-tab-manager-capture-style');
+            }
+            element.setAttribute('data-tab-manager-capture-hidden', '1');
+            element.style.transition = 'none';
+            element.style.opacity = '0';
+            element.style.pointerEvents = 'none';
+          } else {
+            const storedStyle = element.getAttribute('data-tab-manager-capture-style');
+            if (storedStyle != null) {
+              if (storedStyle === '') {
+                element.removeAttribute('style');
+              } else {
+                element.setAttribute('style', storedStyle);
+              }
+              element.removeAttribute('data-tab-manager-capture-style');
+            } else if (element.hasAttribute('data-tab-manager-capture-hidden')) {
+              element.style.removeProperty('opacity');
+              element.style.removeProperty('pointer-events');
+              element.style.removeProperty('transition');
+            }
+            element.removeAttribute('data-tab-manager-capture-hidden');
+          }
+        }
+      },
+      args: [Boolean(hidden)],
+    });
+  } catch (error) {
+    const message = error?.message || '';
+    if (!message.includes('No tab with id') && !message.includes('The tab was closed')) {
+      console.debug('Failed to toggle TabManager visibility for capture:', error);
+    }
+  }
+}
+
+async function prepareTabForCapture(tabId) {
+  await toggleTabManagerVisibility(tabId, true);
+  await delay(60);
+}
+
+async function restoreTabAfterCapture(tabId) {
+  await toggleTabManagerVisibility(tabId, false);
+}
+
 function moveTabToQueueFront(tabId) {
   const index = previewQueue.indexOf(tabId);
   if (index > 0) {
@@ -305,46 +373,54 @@ async function capturePreviewForTab(tabId) {
     const tab = await chrome.tabs.get(tabId);
     if (!tab) {
       await removePreview(tabId);
-      return false;
+      return 'removed';
     }
 
     if (shouldSkipPreviewForUrl(tab.url) || tab.discarded) {
       await removePreview(tabId);
-      return false;
+      return 'removed';
     }
 
     if (tab.status === 'loading') {
-      return false;
+      return 'retry';
     }
 
     if (!tab.active) {
-      return false;
+      return 'inactive';
     }
 
     let image;
+    let captureError = null;
     try {
+      await prepareTabForCapture(tabId);
       image = await chrome.tabs.captureVisibleTab(tab.windowId, PREVIEW_CAPTURE_OPTIONS);
     } catch (error) {
-      if (!String(error?.message || '').includes('No active tab')) {
-        console.error('Failed to capture preview:', error);
+      captureError = error;
+    } finally {
+      await restoreTabAfterCapture(tabId);
+    }
+
+    if (captureError) {
+      if (!String(captureError?.message || '').includes('No active tab')) {
+        console.error('Failed to capture preview:', captureError);
       }
-      return false;
+      return 'retry';
     }
 
     if (typeof image !== 'string' || image.length === 0) {
-      return false;
+      return 'retry';
     }
 
     await recordPreview(tabId, tab, image);
-    return true;
+    return 'success';
   } catch (error) {
     const message = error?.message || '';
     if (message.includes('No tab with id') || message.includes('The tab was closed')) {
       await removePreview(tabId);
-      return false;
+      return 'removed';
     }
     console.error('Unexpected error during preview capture:', error);
-    return false;
+    return 'retry';
   }
 }
 
@@ -390,8 +466,8 @@ async function processPreviewQueue() {
       const tabId = previewQueue.shift();
       previewQueueSet.delete(tabId);
 
-      const success = await capturePreviewForTab(tabId);
-      if (!success && previewEnabled) {
+      const result = await capturePreviewForTab(tabId);
+      if (previewEnabled && result === 'retry') {
         schedulePreviewRetry(tabId);
       }
 
@@ -615,8 +691,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     await removePreview(tabId);
   }
 
-  if (changeInfo.status === 'complete' || changeInfo.url) {
-    enqueuePreview(tabId, { priority: Boolean(changeInfo.url) });
+  if ((changeInfo.status === 'complete' || changeInfo.url) && tab && tab.active) {
+    enqueuePreview(tabId, { priority: true });
   }
 });
 

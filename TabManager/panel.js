@@ -84,10 +84,11 @@ function renderPreviewImage(preview, tab) {
 }
 
 function updatePreviewVisibility() {
-  postToParentMessage(PREVIEW_OVERLAY_VISIBILITY_MESSAGE, {
-    visible: Boolean(previewEnabled),
-  });
   if (!previewEnabled) {
+    postToParentMessage(PREVIEW_OVERLAY_VISIBILITY_MESSAGE, {
+      visible: false,
+      immediate: true,
+    });
     renderPreviewPlaceholder(PREVIEW_DISABLED_MESSAGE);
   } else if (activePreviewTabId == null) {
     renderPreviewPlaceholder(PREVIEW_DEFAULT_MESSAGE);
@@ -175,6 +176,10 @@ function handleTabHover(tab) {
 
   activePreviewTabId = tab.id;
 
+  postToParentMessage(PREVIEW_OVERLAY_VISIBILITY_MESSAGE, {
+    visible: true,
+  });
+
   const cached = previewCache[String(tab.id)];
   if (cached && typeof cached.image === 'string') {
     schedulePreviewRender(cached, tab);
@@ -191,6 +196,11 @@ function handleTabLeave(tabId) {
     return;
   }
   activePreviewTabId = null;
+
+  postToParentMessage(PREVIEW_OVERLAY_VISIBILITY_MESSAGE, {
+    visible: false,
+  });
+
   if (previewEnabled) {
     renderPreviewPlaceholder(PREVIEW_DEFAULT_MESSAGE);
   } else {
@@ -213,9 +223,12 @@ function applyPreviewSettings(enabled, { skipRefresh = false } = {}) {
   previewEnabled = Boolean(enabled);
   updatePreviewToggleUI();
   updatePreviewVisibility();
-  if (!previewEnabled && previewRenderTimeout) {
-    clearTimeout(previewRenderTimeout);
-    previewRenderTimeout = null;
+  if (!previewEnabled) {
+    if (previewRenderTimeout) {
+      clearTimeout(previewRenderTimeout);
+      previewRenderTimeout = null;
+    }
+    activePreviewTabId = null;
   }
   if (previewEnabled && !skipRefresh) {
     refreshTabs();
@@ -487,6 +500,11 @@ chrome.runtime.onMessage.addListener((message) => {
     }
     delete previewCache[String(tabId)];
     if (tabId === activePreviewTabId) {
+      activePreviewTabId = null;
+      postToParentMessage(PREVIEW_OVERLAY_VISIBILITY_MESSAGE, {
+        visible: false,
+        immediate: true,
+      });
       renderPreviewPlaceholder(previewEnabled ? PREVIEW_DEFAULT_MESSAGE : PREVIEW_DISABLED_MESSAGE);
     }
   }

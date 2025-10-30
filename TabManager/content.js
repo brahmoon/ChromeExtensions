@@ -2,8 +2,6 @@ const PANEL_ID = 'tab-manager-panel';
 const PANEL_TRANSITION_MS = 350;
 const PANEL_WIDTH = 400;
 const PREVIEW_OVERLAY_ID = 'tab-manager-preview-overlay';
-const PREVIEW_OVERLAY_WIDTH = 320;
-const PREVIEW_OVERLAY_MARGIN = 12;
 const PREVIEW_OVERLAY_MIN_HEIGHT = 180;
 const PREVIEW_OVERLAY_TRANSITION_MS = 180;
 const PREVIEW_OVERLAY_SANDBOX = 'allow-same-origin';
@@ -102,15 +100,18 @@ function ensurePreviewOverlayElements() {
   container.id = PREVIEW_OVERLAY_ID;
   container.style.cssText = `
     position: fixed;
-    top: 16px;
-    right: ${PANEL_WIDTH + PREVIEW_OVERLAY_MARGIN}px;
-    width: ${PREVIEW_OVERLAY_WIDTH}px;
+    top: 0;
+    left: 0;
+    right: ${PANEL_WIDTH}px;
+    bottom: 0;
     z-index: 999998;
     pointer-events: none;
     opacity: 0;
-    transform: translateX(16px);
+    transform: translateX(-12px);
     transition: opacity ${PREVIEW_OVERLAY_TRANSITION_MS}ms ease, transform ${PREVIEW_OVERLAY_TRANSITION_MS}ms ease;
     display: none;
+    padding: 24px;
+    box-sizing: border-box;
   `;
 
   const shadowRoot = container.attachShadow({ mode: 'open' });
@@ -133,6 +134,14 @@ function ensurePreviewOverlayElements() {
       box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
       color: #e8eaed;
       font-family: 'Noto Sans JP', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      width: 100%;
+      max-height: 100%;
+    }
+
+    :host {
+      display: flex;
+      justify-content: flex-start;
+      align-items: flex-start;
     }
 
     .overlay-shell[data-mode='placeholder'] {
@@ -147,7 +156,7 @@ function ensurePreviewOverlayElements() {
 
     .overlay-frame {
       width: 100%;
-      height: ${PREVIEW_OVERLAY_MIN_HEIGHT}px;
+      height: clamp(${PREVIEW_OVERLAY_MIN_HEIGHT}px, 45vh, 540px);
       border: none;
       display: block;
       background: #111;
@@ -159,9 +168,9 @@ function ensurePreviewOverlayElements() {
       align-items: center;
       justify-content: center;
       gap: 12px;
-      padding: 20px 14px;
+      padding: 28px 18px;
       text-align: center;
-      min-height: ${PREVIEW_OVERLAY_MIN_HEIGHT}px;
+      min-height: clamp(${PREVIEW_OVERLAY_MIN_HEIGHT}px, 45vh, 540px);
       color: #9aa0a6;
       font-size: 13px;
     }
@@ -292,7 +301,7 @@ function showPreviewOverlay() {
   previewOverlayVisible = true;
   container.style.display = 'block';
   container.style.opacity = '0';
-  container.style.transform = 'translateX(16px)';
+  container.style.transform = 'translateX(-12px)';
 
   requestAnimationFrame(() => {
     container.style.opacity = '1';
@@ -324,7 +333,7 @@ function hidePreviewOverlay({ immediate = false } = {}) {
   if (immediate) {
     handleTransitionEnd();
     container.style.opacity = '0';
-    container.style.transform = 'translateX(16px)';
+    container.style.transform = 'translateX(-12px)';
     return;
   }
 
@@ -333,7 +342,7 @@ function hidePreviewOverlay({ immediate = false } = {}) {
 
   requestAnimationFrame(() => {
     container.style.opacity = '0';
-    container.style.transform = 'translateX(16px)';
+    container.style.transform = 'translateX(-12px)';
   });
 }
 
