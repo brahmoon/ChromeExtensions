@@ -78,6 +78,53 @@ function createFaviconElement(tab) {
   return createPlaceholderFavicon(tab);
 }
 
+function isTabMuted(tab) {
+  return Boolean(tab?.mutedInfo && typeof tab.mutedInfo === 'object' && tab.mutedInfo.muted);
+}
+
+function shouldShowAudioButton(tab) {
+  return Boolean(tab?.audible || isTabMuted(tab));
+}
+
+function updateAudioButtonVisual(button, tab) {
+  const muted = isTabMuted(tab);
+  button.textContent = muted ? '🔇' : '🔊';
+  button.title = muted ? 'タブのミュートを解除' : 'タブをミュート';
+  button.setAttribute('aria-pressed', muted ? 'true' : 'false');
+  button.classList.toggle('is-muted', muted);
+}
+
+function createAudioToggleButton(tab) {
+  if (!tab || typeof tab.id !== 'number' || !shouldShowAudioButton(tab)) {
+    return null;
+  }
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'tab-audio-btn';
+  updateAudioButtonVisual(button, tab);
+
+  button.addEventListener('click', async (event) => {
+    event.stopPropagation();
+
+    const nextMuted = !isTabMuted(tab);
+
+    try {
+      await chrome.tabs.update(tab.id, { muted: nextMuted });
+      if (!tab.mutedInfo || typeof tab.mutedInfo !== 'object') {
+        tab.mutedInfo = { muted: nextMuted };
+      } else {
+        tab.mutedInfo.muted = nextMuted;
+      }
+      updateAudioButtonVisual(button, tab);
+    } catch (error) {
+      console.error('Failed to toggle tab mute state:', error);
+    }
+  });
+
+  return button;
+}
+
 function renderPreviewPlaceholder(message) {
   postToParentMessage(PREVIEW_OVERLAY_UPDATE_MESSAGE, {
     state: 'placeholder',
@@ -163,6 +210,8 @@ function createTabListItem(tab) {
   content.textContent = fullTitle;
   content.title = fullTitle;
 
+  const audioButton = createAudioToggleButton(tab);
+
   const closeButton = document.createElement('button');
   closeButton.className = 'tab-close-btn';
   closeButton.type = 'button';
@@ -179,6 +228,9 @@ function createTabListItem(tab) {
 
   li.appendChild(favicon);
   li.appendChild(content);
+  if (audioButton) {
+    li.appendChild(audioButton);
+  }
   li.appendChild(closeButton);
   li.title = fullTitle;
 
@@ -662,7 +714,13 @@ function attachEventListeners() {
   chrome.tabs.onCreated.addListener(refreshTabs);
   chrome.tabs.onRemoved.addListener(refreshTabs);
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (changeInfo.status === 'complete' || changeInfo.title || changeInfo.url) {
+    if (
+      changeInfo.status === 'complete' ||
+      changeInfo.title ||
+      changeInfo.url ||
+      changeInfo.audible !== undefined ||
+      changeInfo.mutedInfo
+    ) {
       refreshTabs();
     }
   });
