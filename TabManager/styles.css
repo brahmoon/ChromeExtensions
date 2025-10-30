@@ -5,6 +5,7 @@ body {
   color: #eee;
   height: 100%;
   overflow: auto;
+  position: relative;
 }
 
 header {
@@ -18,6 +19,61 @@ header {
   padding: 8px 10px;
   border-bottom: 1px solid #444;
   transition: padding 0.25s ease, box-shadow 0.25s ease;
+}
+
+.collapse-handle {
+  position: fixed;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 32px;
+  height: 80px;
+  background: transparent;
+  color: #eee;
+  border: none;
+  padding: 0 6px 0 0;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.collapse-handle::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translate(-100%, -50%);
+  width: 40px;
+  height: 80px;
+  background-color: #303134;
+  border: 1px solid #444;
+  border-right: none;
+  border-radius: 40px 0 0 40px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.collapse-handle:hover::before,
+.collapse-handle:focus-visible::before {
+  background-color: #3a3c40;
+}
+
+.collapse-handle:focus-visible::before {
+  box-shadow:
+    0 0 0 2px rgba(138, 180, 248, 0.8),
+    0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+.collapse-handle span[aria-hidden='true'] {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.collapse-handle:hover span[aria-hidden='true'],
+.collapse-handle:focus-visible span[aria-hidden='true'] {
+  color: #fff;
 }
 
 body {
