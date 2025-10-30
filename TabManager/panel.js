@@ -12,7 +12,6 @@ const PREVIEW_TOGGLE_ID = 'preview-toggle';
 const PROPERTY_BUTTON_ID = 'property-btn';
 const TAB_VIEW_ID = 'tab-view';
 const OPTIONS_VIEW_ID = 'options-view';
-const PANEL_COLLAPSE_HANDLE_ID = 'collapse-handle';
 const PREVIEW_CACHE_CLEAR_BUTTON_ID = 'preview-cache-clear-btn';
 const PREVIEW_CACHE_SIZE_ID = 'preview-cache-size';
 const PREVIEW_DEFAULT_MESSAGE = 'タブをホバーしてプレビューを表示';
@@ -48,15 +47,6 @@ function postToParentMessage(type, detail = {}) {
       // ignore messaging failures
     }
   }
-}
-
-function notifyPanelClosedByUser() {
-  window.parent.postMessage({ type: 'TabManagerClosePanel' }, '*');
-  chrome.runtime
-    .sendMessage({ type: 'TabManagerPanelClosedByUser' })
-    .catch((error) => {
-      console.error('Failed to notify background about panel close:', error);
-    });
 }
 
 function createPlaceholderFavicon(tab) {
@@ -718,15 +708,12 @@ async function refreshTabs() {
 }
 
 function attachEventListeners() {
-  const closeButton = document.getElementById('close-btn');
-  if (closeButton) {
-    closeButton.addEventListener('click', notifyPanelClosedByUser);
-  }
-
-  const collapseHandle = document.getElementById(PANEL_COLLAPSE_HANDLE_ID);
-  if (collapseHandle) {
-    collapseHandle.addEventListener('click', notifyPanelClosedByUser);
-  }
+  document.getElementById('close-btn').addEventListener('click', () => {
+    window.parent.postMessage({ type: 'TabManagerClosePanel' }, '*');
+    chrome.runtime.sendMessage({ type: 'TabManagerPanelClosedByUser' }).catch((error) => {
+      console.error('Failed to notify background about panel close:', error);
+    });
+  });
 
   chrome.tabs.onActivated.addListener(refreshTabs);
   chrome.tabs.onCreated.addListener(refreshTabs);
