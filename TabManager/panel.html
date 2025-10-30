@@ -7,30 +7,10 @@
 </head>
 <body>
   <header>
-    <div class="header-left">
-      <h2>Tab Manager</h2>
-      <button id="property-btn" type="button" title="プロパティ">⚙</button>
-    </div>
+    <h2>Tab Manager</h2>
     <button id="close-btn">&gt;</button>
   </header>
-  <div id="property-popover" hidden>
-    <div class="property-row">
-      <label>
-        <input type="checkbox" id="preview-toggle">
-        プレビューを有効にする
-      </label>
-    </div>
-  </div>
-  <div id="panel-content">
-    <div id="preview-column">
-      <div id="preview-wrapper">
-        <div class="preview-placeholder" id="preview-placeholder">
-          <p>タブをホバーしてプレビューを表示</p>
-        </div>
-      </div>
-    </div>
-    <ul id="tab-list"></ul>
-  </div>
+  <ul id="tab-list"></ul>
   <script src="panel.js"></script>
 </body>
 </html>
