@@ -9,6 +9,7 @@ const PREVIEW_OVERLAY_UPDATE_MESSAGE = 'TabManagerPreviewOverlayUpdate';
 const PREVIEW_OVERLAY_VISIBILITY_MESSAGE = 'TabManagerPreviewOverlayVisibility';
 const EXTENSION_ORIGIN = chrome.runtime.getURL('').replace(/\/$/, '');
 const TOGGLE_BUTTON_ID = 'tab-manager-toggle';
+const EXTENSION_ELEMENT_ATTRIBUTE = 'data-tab-manager-element';
 const TOGGLE_BUTTON_SIZE = 36;
 const TOGGLE_MARGIN_RIGHT = 5;
 const TOGGLE_OPACITY_INACTIVE = 0.3;
@@ -98,6 +99,7 @@ function ensurePreviewOverlayElements() {
 
   const container = document.createElement('div');
   container.id = PREVIEW_OVERLAY_ID;
+  container.setAttribute(EXTENSION_ELEMENT_ATTRIBUTE, '');
   container.style.cssText = `
     position: fixed;
     top: 0;
@@ -135,13 +137,16 @@ function ensurePreviewOverlayElements() {
       color: #e8eaed;
       font-family: 'Noto Sans JP', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       width: 100%;
-      max-height: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
     }
 
     :host {
       display: flex;
       justify-content: flex-start;
-      align-items: flex-start;
+      align-items: stretch;
     }
 
     .overlay-shell[data-mode='placeholder'] {
@@ -150,16 +155,23 @@ function ensurePreviewOverlayElements() {
 
     .overlay-inner {
       position: relative;
+      width: 100%;
+      height: 100%;
       min-height: ${PREVIEW_OVERLAY_MIN_HEIGHT}px;
       background: #111;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 1 1 auto;
     }
 
     .overlay-frame {
       width: 100%;
-      height: clamp(${PREVIEW_OVERLAY_MIN_HEIGHT}px, 45vh, 540px);
+      height: 100%;
       border: none;
       display: block;
       background: #111;
+      overflow: hidden;
     }
 
     .overlay-placeholder {
@@ -170,9 +182,12 @@ function ensurePreviewOverlayElements() {
       gap: 12px;
       padding: 28px 18px;
       text-align: center;
-      min-height: clamp(${PREVIEW_OVERLAY_MIN_HEIGHT}px, 45vh, 540px);
+      min-height: ${PREVIEW_OVERLAY_MIN_HEIGHT}px;
+      width: 100%;
+      height: 100%;
       color: #9aa0a6;
       font-size: 13px;
+      overflow: hidden;
     }
 
     .overlay-placeholder.is-loading {
@@ -227,7 +242,7 @@ function ensurePreviewOverlayElements() {
 function buildPreviewSrcdoc(image, title) {
   const safeImage = escapeHtmlAttribute(image);
   const safeTitle = escapeHtmlAttribute(title);
-  return `<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><style>body{margin:0;background:#111;display:flex;align-items:center;justify-content:center;}img{width:100%;height:100%;object-fit:cover;}</style></head><body><img src="${safeImage}" alt="${safeTitle}"></body></html>`;
+  return `<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#111;overflow:hidden;}body{display:flex;align-items:center;justify-content:center;}img{width:100%;height:100%;object-fit:contain;}</style></head><body><img src="${safeImage}" alt="${safeTitle}"></body></html>`;
 }
 
 function updatePreviewOverlayContent(detail = {}) {
@@ -274,6 +289,7 @@ function updatePreviewOverlayContent(detail = {}) {
   iframe.className = 'overlay-frame';
   iframe.setAttribute('sandbox', PREVIEW_OVERLAY_SANDBOX);
   iframe.setAttribute('title', `${title} のプレビュー`);
+  iframe.setAttribute('scrolling', 'no');
   iframe.srcdoc = buildPreviewSrcdoc(image, title);
 
   inner.appendChild(iframe);
@@ -292,14 +308,14 @@ function showPreviewOverlay() {
   shell.setAttribute('aria-hidden', 'false');
 
   if (previewOverlayVisible) {
-    container.style.display = 'block';
+    container.style.display = 'flex';
     container.style.opacity = '1';
     container.style.transform = 'translateX(0)';
     return;
   }
 
   previewOverlayVisible = true;
-  container.style.display = 'block';
+  container.style.display = 'flex';
   container.style.opacity = '0';
   container.style.transform = 'translateX(-12px)';
 
@@ -349,6 +365,7 @@ function hidePreviewOverlay({ immediate = false } = {}) {
 function createPanelElement() {
   const iframe = document.createElement('iframe');
   iframe.id = PANEL_ID;
+  iframe.setAttribute(EXTENSION_ELEMENT_ATTRIBUTE, '');
   iframe.src = chrome.runtime.getURL('panel.html');
   iframe.style.cssText = `
     position: fixed;
@@ -377,6 +394,7 @@ function getToggleButton() {
 function createToggleButton() {
   const button = document.createElement('button');
   button.id = TOGGLE_BUTTON_ID;
+  button.setAttribute(EXTENSION_ELEMENT_ATTRIBUTE, '');
   button.type = 'button';
   button.textContent = '<';
   button.setAttribute('aria-label', 'Tab Manager を開く');

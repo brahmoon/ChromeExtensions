@@ -25,13 +25,6 @@ body {
   flex-direction: column;
 }
 
-#panel-content {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: row;
-}
-
 header.is-compact {
   padding: 0px 10px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
@@ -41,6 +34,7 @@ header.is-compact {
   display: flex;
   align-items: center;
   gap: 8px;
+  position: relative;
 }
 
 #close-btn,
@@ -74,42 +68,83 @@ header.is-compact {
   transition: background 0.2s ease-out;
 }
 
+#property-btn[aria-expanded='true'] {
+  background-color: rgba(255, 255, 255, 0.18);
+}
+
 #property-btn:hover,
 #property-btn:focus {
   background-color: rgba(255, 255, 255, 0.12);
   outline: none;
 }
 
-#property-popover {
-  position: sticky;
-  top: 48px;
-  margin: 0 10px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: rgba(60, 64, 67, 0.9);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-  font-size: 13px;
+#panel-content {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  color: #e8eaed;
+  padding: 0 10px 10px;
 }
 
-.property-row label {
+.panel-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-view[hidden] {
+  display: none;
+}
+
+.options-header {
+  padding: 16px 4px 8px;
+}
+
+.options-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.options-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 0 4px 16px;
+}
+
+.option-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  font-size: 14px;
   cursor: pointer;
 }
 
-.property-row input[type='checkbox'] {
-  width: 16px;
-  height: 16px;
+.option-row input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
 }
 
-#panel-content {
-  padding: 0 10px 10px;
+.option-description {
+  margin: 0;
+  color: #bdc1c6;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 #tab-list {
@@ -118,6 +153,7 @@ header.is-compact {
   padding: 10px 0;
   flex: 1;
   min-width: 0;
+  overflow-y: auto;
 }
 
 .tab-item {
