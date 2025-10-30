@@ -2,22 +2,21 @@ const PANEL_ID = 'tab-manager-panel';
 const PANEL_TRANSITION_MS = 350;
 const EXTENSION_ORIGIN = chrome.runtime.getURL('').replace(/\/$/, '');
 const TOGGLE_BUTTON_ID = 'tab-manager-toggle';
-const TOGGLE_BUTTON_SIZE = 48;
+const TOGGLE_BUTTON_SIZE = 36;
 const TOGGLE_MARGIN_RIGHT = 5;
 const TOGGLE_OPACITY_INACTIVE = 0.3;
 const TOGGLE_TRANSITION_MS = 220;
 const TOGGLE_STORAGE_KEY = 'tabManagerToggleTop';
+const TOGGLE_INITIAL_TOP = 15;
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
-function getStoredToggleTop() {
+async function getStoredToggleTop() {
   try {
-    const rawValue = window.localStorage?.getItem(TOGGLE_STORAGE_KEY);
-    if (!rawValue) {
-      return null;
-    }
+    const result = await chrome.storage.local.get(TOGGLE_STORAGE_KEY);
+    const rawValue = result?.[TOGGLE_STORAGE_KEY];
     const parsed = Number(rawValue);
     return Number.isFinite(parsed) ? parsed : null;
   } catch (error) {
@@ -27,7 +26,7 @@ function getStoredToggleTop() {
 
 function storeToggleTop(top) {
   try {
-    window.localStorage?.setItem(TOGGLE_STORAGE_KEY, String(top));
+    chrome.storage.local.set({ [TOGGLE_STORAGE_KEY]: Number(top) });
   } catch (error) {
     // ignore storage failures
   }
@@ -49,13 +48,26 @@ function setButtonTop(button, top, { persist = false } = {}) {
 }
 
 function applyStoredToggleTop(button) {
-  const storedTop = getStoredToggleTop();
-  const fallbackTop = Math.max((window.innerHeight - TOGGLE_BUTTON_SIZE) / 2, 0);
-  const initialTop = storedTop != null ? storedTop : fallbackTop;
-  const clamped = setButtonTop(button, initialTop);
-  if (storedTop != null && storedTop !== clamped) {
-    storeToggleTop(clamped);
-  }
+  const fallbackTop = clamp(
+    TOGGLE_INITIAL_TOP,
+    0,
+    Math.max(window.innerHeight - TOGGLE_BUTTON_SIZE, 0)
+  );
+  const fallbackApplied = setButtonTop(button, fallbackTop);
+
+  getStoredToggleTop()
+    .then((storedTop) => {
+      if (storedTop == null) {
+        return;
+      }
+      const clamped = setButtonTop(button, storedTop);
+      if (clamped !== storedTop) {
+        storeToggleTop(clamped);
+      }
+    })
+    .catch(() => {});
+
+  return fallbackApplied;
 }
 
 function createPanelElement() {
@@ -373,6 +385,38 @@ if (!window.__tabManagerMessageHandler) {
 
   window.addEventListener('message', messageHandler);
   window.__tabManagerMessageHandler = messageHandler;
+}
+
+if (!window.__tabManagerStorageListener) {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local' || !changes) {
+      return;
+    }
+
+    const change = changes[TOGGLE_STORAGE_KEY];
+    if (!change) {
+      return;
+    }
+
+    const newValue = Number(change.newValue);
+    if (!Number.isFinite(newValue)) {
+      return;
+    }
+
+    const button = getToggleButton();
+    if (!button) {
+      return;
+    }
+
+    const currentTop = getButtonTop(button);
+    if (currentTop != null && Math.abs(currentTop - newValue) < 0.5) {
+      return;
+    }
+
+    setButtonTop(button, newValue);
+  });
+
+  window.__tabManagerStorageListener = true;
 }
 
 if (document.readyState === 'loading') {
