@@ -41,7 +41,6 @@ header.is-compact {
   display: flex;
   align-items: center;
   gap: 8px;
-  position: relative;
 }
 
 #close-btn,
@@ -82,39 +81,19 @@ header.is-compact {
 }
 
 #property-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  margin: 0;
+  position: sticky;
+  top: 48px;
+  margin: 0 10px;
   padding: 10px 12px;
   border-radius: 8px;
-  background: rgba(60, 64, 67, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  background: rgba(60, 64, 67, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   font-size: 13px;
   display: flex;
   flex-direction: column;
   gap: 8px;
   color: #e8eaed;
-  min-width: 220px;
-  z-index: 2;
-}
-
-#property-popover::before {
-  content: '';
-  position: absolute;
-  top: -8px;
-  right: 14px;
-  width: 0;
-  height: 0;
-  border-left: 8px solid transparent;
-  border-right: 8px solid transparent;
-  border-bottom: 8px solid rgba(60, 64, 67, 0.95);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12);
-}
-
-#property-popover[hidden] {
-  display: none;
 }
 
 .property-row label {
