@@ -14,6 +14,7 @@ const TAB_VIEW_ID = 'tab-view';
 const OPTIONS_VIEW_ID = 'options-view';
 const PREVIEW_CACHE_CLEAR_BUTTON_ID = 'preview-cache-clear-btn';
 const PREVIEW_CACHE_SIZE_ID = 'preview-cache-size';
+const TAB_LIST_ID = 'tab-list';
 const PREVIEW_DEFAULT_MESSAGE = 'タブをホバーしてプレビューを表示';
 const PREVIEW_DISABLED_MESSAGE = '設定画面からプレビューを有効にしてください';
 const PREVIEW_UNAVAILABLE_MESSAGE = 'このタブのプレビュー画像は利用できません';
@@ -38,6 +39,85 @@ const previewUnavailableTabs = new Set();
 let activePreviewTabId = null;
 let previewRenderTimeout = null;
 let optionsViewOpen = false;
+
+const tabListScrollState = {
+  lastKnownScrollTop: 0,
+  shouldCenterActiveTab: true,
+};
+
+function clamp(value, min, max) {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+  if (value < min) {
+    return min;
+  }
+  if (value > max) {
+    return max;
+  }
+  return value;
+}
+
+function getTabListElement() {
+  return document.getElementById(TAB_LIST_ID);
+}
+
+function updateStoredTabListScroll(list = getTabListElement()) {
+  if (!list) {
+    return;
+  }
+  const maxScrollTop = Math.max(list.scrollHeight - list.clientHeight, 0);
+  const currentScrollTop = clamp(list.scrollTop, 0, maxScrollTop);
+  tabListScrollState.lastKnownScrollTop = currentScrollTop;
+}
+
+function setupTabListScrollPersistence() {
+  const list = getTabListElement();
+  if (!list || list.__tabManagerScrollSetup) {
+    return;
+  }
+
+  list.addEventListener(
+    'scroll',
+    () => {
+      updateStoredTabListScroll(list);
+    },
+    { passive: true }
+  );
+
+  list.__tabManagerScrollSetup = true;
+}
+
+function restoreTabListScrollPosition({ activeTabId } = {}) {
+  const list = getTabListElement();
+  if (!list) {
+    return;
+  }
+
+  const containerHeight = list.clientHeight;
+  const maxScrollTop = Math.max(list.scrollHeight - containerHeight, 0);
+  let targetScrollTop = tabListScrollState.lastKnownScrollTop;
+
+  if (tabListScrollState.shouldCenterActiveTab && activeTabId != null) {
+    const activeElement = list.querySelector(
+      `.tab-item[data-tab-id="${activeTabId}"]`
+    );
+    if (activeElement && containerHeight > 0) {
+      const containerRect = list.getBoundingClientRect();
+      const elementRect = activeElement.getBoundingClientRect();
+      const offsetWithinContainer =
+        elementRect.top - containerRect.top + list.scrollTop;
+      const centeredTop =
+        offsetWithinContainer - containerHeight / 2 + elementRect.height / 2;
+      targetScrollTop = centeredTop;
+    }
+  }
+
+  const clampedScrollTop = clamp(targetScrollTop, 0, maxScrollTop);
+  list.scrollTop = clampedScrollTop;
+  tabListScrollState.lastKnownScrollTop = clampedScrollTop;
+  tabListScrollState.shouldCenterActiveTab = false;
+}
 
 function postToParentMessage(type, detail = {}) {
   if (window.parent && window.parent !== window) {
@@ -212,7 +292,8 @@ function createGroupAccordion(groupId, groupInfo, tabs) {
   }
 
   const listId = `tab-group-${groupId}`;
-  const expandedByDefault = groupInfo?.collapsed ? false : true;
+  const containsActiveTab = tabs.some((tab) => Boolean(tab.active));
+  const expandedByDefault = containsActiveTab ? true : groupInfo?.collapsed ? false : true;
   const titleText = (groupInfo?.title || '').trim() || `グループ ${groupId}`;
   const color = resolveGroupColor(groupInfo?.color);
 
@@ -583,20 +664,26 @@ async function initializePreviewState() {
 async function refreshTabs() {
   const tabs = await chrome.tabs.query({});
 
-  const list = document.getElementById('tab-list');
+  const list = getTabListElement();
   if (!list) {
     return;
   }
+  setupTabListScrollPersistence();
+  updateStoredTabListScroll(list);
   list.innerHTML = '';
 
   const tabIdsForQueue = [];
 
   const groupMap = new Map();
   const structure = [];
+  let activeTabId = null;
 
   for (const tab of tabs) {
     if (typeof tab.id === 'number') {
       tabIdsForQueue.push(tab.id);
+      if (tab.active) {
+        activeTabId = tab.id;
+      }
     }
 
     if (typeof tab.groupId === 'number' && tab.groupId >= 0) {
@@ -648,6 +735,10 @@ async function refreshTabs() {
   }
 
   syncPreviewQueue(tabIdsForQueue);
+
+  requestAnimationFrame(() => {
+    restoreTabListScrollPosition({ activeTabId });
+  });
 }
 
 function attachEventListeners() {
@@ -673,6 +764,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await initializePreviewState();
   attachEventListeners();
   setupHeaderBehavior();
+  setupTabListScrollPersistence();
   refreshTabs();
 });
 
