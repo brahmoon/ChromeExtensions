@@ -69,29 +69,24 @@ header.is-compact {
   background-color: rgba(66, 133, 244, 0.18);
 }
 
-.tab-indicator {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background-color: #9aa0a6;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+.tab-favicon {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background-color: #3c4043;
   flex-shrink: 0;
+  object-fit: cover;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
 }
 
-.tab-indicator.status-active {
-  background-color: #34a853;
-}
-
-.tab-indicator.status-average {
-  background-color: #4285f4;
-}
-
-.tab-indicator.status-low {
-  background-color: #fbbc05;
-}
-
-.tab-indicator.status-idle {
-  background-color: #5f6368;
+.tab-favicon--placeholder {
+  color: #e8eaed;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
 }
 
 .tab-text {
@@ -99,13 +94,6 @@ header.is-compact {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.tab-meta {
-  font-size: 12px;
-  color: #a9a9a9;
-  min-width: 32px;
-  text-align: right;
 }
 
 .tab-close-btn {
