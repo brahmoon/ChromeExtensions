@@ -485,13 +485,9 @@ async function capturePreviewForTab(tabId) {
   }
 }
 
-function enqueuePreview(tabId, { priority = false, force = false } = {}) {
+function enqueuePreview(tabId, { priority = false } = {}) {
   if (!previewEnabled || typeof tabId !== 'number') {
     return;
-  }
-
-  if (force) {
-    unavailablePreviews.delete(tabId);
   }
 
   clearPreviewRetry(tabId);
@@ -707,8 +703,8 @@ async function openPanelOnTab(tabId) {
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   await Promise.all([ensurePanelStateReady(), ensurePreviewStateReady()]);
 
-  if (previewEnabled) {
-    enqueuePreview(tabId, { priority: true, force: true });
+  if (previewEnabled && !previewData.has(tabId)) {
+    enqueuePreview(tabId, { priority: true });
   }
 
   if (!panelState.isOpen) {
@@ -739,16 +735,11 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   }
 
   if (changeInfo.url) {
-    if (shouldSkipPreviewForUrl(changeInfo.url)) {
-      await removePreview(tabId, { reason: PREVIEW_REMOVAL_REASON_UNSUPPORTED });
-      return;
-    }
-
     await removePreview(tabId, { reason: PREVIEW_REMOVAL_REASON_REFRESHED });
   }
 
-  if ((changeInfo.status === 'complete' || changeInfo.url) && tab && tab.active) {
-    enqueuePreview(tabId, { priority: true, force: true });
+  if ((changeInfo.status === 'complete' || changeInfo.url) && tab && tab.active && !previewData.has(tabId)) {
+    enqueuePreview(tabId, { priority: true });
   }
 });
 
