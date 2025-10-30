@@ -38,89 +38,6 @@ const previewUnavailableTabs = new Set();
 let activePreviewTabId = null;
 let previewRenderTimeout = null;
 let optionsViewOpen = false;
-let pendingScrollInstruction = null;
-
-function scheduleScrollPreservation() {
-  const list = document.getElementById('tab-list');
-  const currentScroll = list ? list.scrollTop : 0;
-  pendingScrollInstruction = {
-    type: 'preserve',
-    value: currentScroll,
-  };
-}
-
-function scheduleScrollToActiveTab() {
-  pendingScrollInstruction = { type: 'center-active' };
-}
-
-function ensureGroupVisibleForTabItem(tabItem) {
-  if (!tabItem) {
-    return;
-  }
-
-  const groupList = tabItem.closest('.group-tab-list');
-  if (groupList && groupList.hidden) {
-    groupList.hidden = false;
-    const header = groupList.previousElementSibling;
-    if (header && header.classList.contains('group-header')) {
-      header.setAttribute('aria-expanded', 'true');
-    }
-  }
-}
-
-function centerActiveTabInList(list) {
-  if (!list) {
-    return false;
-  }
-
-  const activeTabItem = list.querySelector('.tab-item.is-active');
-  if (!activeTabItem) {
-    return false;
-  }
-
-  ensureGroupVisibleForTabItem(activeTabItem);
-
-  const containerRect = list.getBoundingClientRect();
-  const itemRect = activeTabItem.getBoundingClientRect();
-  const elementHeight = itemRect.height || activeTabItem.offsetHeight;
-  const offsetWithinList = itemRect.top - containerRect.top + list.scrollTop;
-  const target =
-    offsetWithinList - Math.max(0, (list.clientHeight - elementHeight) / 2);
-  const maxScroll = Math.max(0, list.scrollHeight - list.clientHeight);
-  const nextScrollTop = Math.min(Math.max(target, 0), maxScroll);
-  list.scrollTop = nextScrollTop;
-  return true;
-}
-
-function applyScrollInstruction(list, instruction, fallbackScrollTop) {
-  if (!list) {
-    return;
-  }
-
-  if (!instruction) {
-    instruction = {
-      type: 'preserve',
-      value: Number.isFinite(fallbackScrollTop) ? fallbackScrollTop : list.scrollTop,
-    };
-  }
-
-  if (instruction.type === 'center-active') {
-    const centered = centerActiveTabInList(list);
-    if (centered) {
-      return;
-    }
-    instruction = {
-      type: 'preserve',
-      value: Number.isFinite(fallbackScrollTop) ? fallbackScrollTop : list.scrollTop,
-    };
-  }
-
-  if (instruction.type === 'preserve') {
-    const maxScroll = Math.max(0, list.scrollHeight - list.clientHeight);
-    const desired = Number.isFinite(instruction.value) ? instruction.value : list.scrollTop;
-    list.scrollTop = Math.min(Math.max(desired, 0), maxScroll);
-  }
-}
 
 function postToParentMessage(type, detail = {}) {
   if (window.parent && window.parent !== window) {
@@ -159,54 +76,6 @@ function createFaviconElement(tab) {
   }
 
   return createPlaceholderFavicon(tab);
-}
-
-function isTabMuted(tab) {
-  return Boolean(tab?.mutedInfo && typeof tab.mutedInfo === 'object' && tab.mutedInfo.muted);
-}
-
-function shouldShowAudioButton(tab) {
-  return Boolean(tab?.audible || isTabMuted(tab));
-}
-
-function updateAudioButtonVisual(button, tab) {
-  const muted = isTabMuted(tab);
-  button.textContent = muted ? '🔇' : '🔊';
-  button.title = muted ? 'タブのミュートを解除' : 'タブをミュート';
-  button.setAttribute('aria-pressed', muted ? 'true' : 'false');
-  button.classList.toggle('is-muted', muted);
-}
-
-function createAudioToggleButton(tab) {
-  if (!tab || typeof tab.id !== 'number' || !shouldShowAudioButton(tab)) {
-    return null;
-  }
-
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'tab-audio-btn';
-  updateAudioButtonVisual(button, tab);
-
-  button.addEventListener('click', async (event) => {
-    event.stopPropagation();
-    scheduleScrollPreservation();
-
-    const nextMuted = !isTabMuted(tab);
-
-    try {
-      await chrome.tabs.update(tab.id, { muted: nextMuted });
-      if (!tab.mutedInfo || typeof tab.mutedInfo !== 'object') {
-        tab.mutedInfo = { muted: nextMuted };
-      } else {
-        tab.mutedInfo.muted = nextMuted;
-      }
-      updateAudioButtonVisual(button, tab);
-    } catch (error) {
-      console.error('Failed to toggle tab mute state:', error);
-    }
-  });
-
-  return button;
 }
 
 function renderPreviewPlaceholder(message) {
@@ -294,8 +163,6 @@ function createTabListItem(tab) {
   content.textContent = fullTitle;
   content.title = fullTitle;
 
-  const audioButton = createAudioToggleButton(tab);
-
   const closeButton = document.createElement('button');
   closeButton.className = 'tab-close-btn';
   closeButton.type = 'button';
@@ -303,7 +170,6 @@ function createTabListItem(tab) {
   closeButton.title = 'タブを閉じる';
   closeButton.addEventListener('click', async (event) => {
     event.stopPropagation();
-    scheduleScrollPreservation();
     try {
       await chrome.tabs.remove(tab.id);
     } catch (error) {
@@ -313,9 +179,6 @@ function createTabListItem(tab) {
 
   li.appendChild(favicon);
   li.appendChild(content);
-  if (audioButton) {
-    li.appendChild(audioButton);
-  }
   li.appendChild(closeButton);
   li.title = fullTitle;
 
@@ -724,10 +587,6 @@ async function refreshTabs() {
   if (!list) {
     return;
   }
-  const existingScrollTop = list.scrollTop;
-  const instruction = pendingScrollInstruction;
-  pendingScrollInstruction = null;
-
   list.innerHTML = '';
 
   const tabIdsForQueue = [];
@@ -789,7 +648,6 @@ async function refreshTabs() {
   }
 
   syncPreviewQueue(tabIdsForQueue);
-  applyScrollInstruction(list, instruction, existingScrollTop);
 }
 
 function attachEventListeners() {
@@ -804,13 +662,7 @@ function attachEventListeners() {
   chrome.tabs.onCreated.addListener(refreshTabs);
   chrome.tabs.onRemoved.addListener(refreshTabs);
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (
-      changeInfo.status === 'complete' ||
-      changeInfo.title ||
-      changeInfo.url ||
-      changeInfo.audible !== undefined ||
-      changeInfo.mutedInfo
-    ) {
+    if (changeInfo.status === 'complete' || changeInfo.title || changeInfo.url) {
       refreshTabs();
     }
   });
@@ -821,8 +673,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await initializePreviewState();
   attachEventListeners();
   setupHeaderBehavior();
-  scheduleScrollToActiveTab();
-  await refreshTabs();
+  refreshTabs();
 });
 
 function setupHeaderBehavior() {
