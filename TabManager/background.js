@@ -1,17 +1,6 @@
-const HISTORY_KEY = 'tabAccessHistory';
-const EMA_KEY = 'tabAccessEma';
 const PANEL_STATE_KEY = 'tabManagerPanelState';
-const MAX_HISTORY = 100;
-const EMA_ALPHA = 0.3;
 
 const panelStorageArea = chrome.storage.session ?? chrome.storage.local;
-
-let metricsState = {
-  history: [],
-  ema: {},
-};
-
-let metricsReadyPromise = loadMetricsState();
 
 let panelState = {
   isOpen: false,
@@ -19,41 +8,6 @@ let panelState = {
 };
 
 let panelStateReadyPromise = loadPanelState();
-
-async function loadMetricsState() {
-  const stored = await chrome.storage.local.get({
-    [HISTORY_KEY]: [],
-    [EMA_KEY]: {},
-  });
-
-  metricsState = {
-    history: Array.isArray(stored[HISTORY_KEY]) ? stored[HISTORY_KEY] : [],
-    ema: stored[EMA_KEY] && typeof stored[EMA_KEY] === 'object' ? stored[EMA_KEY] : {},
-  };
-}
-
-async function ensureMetricsState() {
-  try {
-    await metricsReadyPromise;
-  } catch (error) {
-    console.error('Failed to load metrics state:', error);
-    metricsReadyPromise = loadMetricsState();
-    await metricsReadyPromise;
-  }
-}
-
-async function persistMetrics() {
-  await chrome.storage.local.set({
-    [HISTORY_KEY]: metricsState.history,
-    [EMA_KEY]: metricsState.ema,
-  });
-
-  chrome.runtime
-    .sendMessage({ type: 'TabManagerMetricsUpdated' })
-    .catch(() => {
-      // Ignore when no listeners are available.
-    });
-}
 
 async function loadPanelState() {
   try {
@@ -113,48 +67,6 @@ function updatePanelState(partial) {
   });
 }
 
-async function updateAccessMetrics(tabId) {
-  await ensureMetricsState();
-
-  const tabKey = String(tabId);
-  const history = [...metricsState.history, tabId];
-  if (history.length > MAX_HISTORY) {
-    history.splice(0, history.length - MAX_HISTORY);
-  }
-
-  const decayedEma = {};
-  for (const [key, value] of Object.entries(metricsState.ema)) {
-    const decayedValue = (1 - EMA_ALPHA) * value;
-    if (decayedValue > 0.001) {
-      decayedEma[key] = decayedValue;
-    }
-  }
-  decayedEma[tabKey] = (decayedEma[tabKey] || 0) + EMA_ALPHA;
-
-  metricsState = {
-    history,
-    ema: decayedEma,
-  };
-
-  await persistMetrics();
-}
-
-async function pruneTabMetrics(tabId) {
-  await ensureMetricsState();
-
-  const tabKey = String(tabId);
-  const filteredHistory = metricsState.history.filter((id) => id !== tabId);
-  const updatedEma = { ...metricsState.ema };
-  delete updatedEma[tabKey];
-
-  metricsState = {
-    history: filteredHistory,
-    ema: updatedEma,
-  };
-
-  await persistMetrics();
-}
-
 async function sendPanelCommand(tabId, type) {
   if (typeof tabId !== 'number') {
     return false;
@@ -211,12 +123,6 @@ async function openPanelOnTab(tabId) {
 }
 
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-  try {
-    await updateAccessMetrics(tabId);
-  } catch (error) {
-    console.error('Failed to update tab metrics on activation:', error);
-  }
-
   await ensurePanelStateReady();
 
   if (!panelState.isOpen) {
@@ -230,12 +136,6 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
-  try {
-    await pruneTabMetrics(tabId);
-  } catch (error) {
-    console.error('Failed to prune tab metrics on removal:', error);
-  }
-
   await ensurePanelStateReady();
 
   if (panelState.tabId === tabId) {
@@ -268,22 +168,6 @@ chrome.action.onClicked.addListener(async (tab) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message?.type) {
     return;
-  }
-
-  if (message.type === 'TabManagerGetUsageMetrics') {
-    (async () => {
-      try {
-        await ensureMetricsState();
-        sendResponse({
-          history: metricsState.history,
-          ema: metricsState.ema,
-        });
-      } catch (error) {
-        console.error('Failed to respond with usage metrics:', error);
-        sendResponse({ history: [], ema: {} });
-      }
-    })();
-    return true;
   }
 
   if (message.type === 'TabManagerPanelClosedByUser') {
