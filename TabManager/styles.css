@@ -135,6 +135,42 @@ header.is-compact {
   line-height: 1.5;
 }
 
+.option-row--button-row {
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  cursor: default;
+}
+
+.option-button {
+  background-color: #3c4043;
+  color: #e8eaed;
+  border: 1px solid #5f6368;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.option-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.option-button:hover:not(:disabled),
+.option-button:focus-visible:not(:disabled) {
+  outline: none;
+  background-color: #4a4f54;
+  border-color: #8ab4f8;
+}
+
+.option-meta {
+  font-size: 12px;
+  color: #bdc1c6;
+  white-space: nowrap;
+}
+
 .visually-hidden {
   position: absolute !important;
   width: 1px;
@@ -156,6 +192,80 @@ header.is-compact {
   overflow-y: auto;
 }
 
+.group-item {
+  border-bottom: 1px solid #333;
+}
+
+.group-header {
+  width: 100%;
+  background: none;
+  border: none;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 14px;
+  text-align: left;
+  transition: background 0.2s ease;
+}
+
+.group-header:hover,
+.group-header:focus-visible {
+  outline: none;
+  background-color: #3c4043;
+}
+
+.group-header::after {
+  content: '';
+  width: 0;
+  height: 0;
+  display: inline-block;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid #bdc1c6;
+  margin-left: auto;
+  transform-origin: center;
+  transition: transform 0.2s ease;
+}
+
+.group-header[aria-expanded='false']::after {
+  transform: rotate(-90deg);
+}
+
+.group-color-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  background-color: #9aa0a6;
+}
+
+.group-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-count {
+  color: #9aa0a6;
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+.group-tab-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 6px 28px;
+}
+
+.group-tab-list[hidden] {
+  display: none;
+}
+
 .tab-item {
   display: flex;
   align-items: center;
@@ -172,6 +282,16 @@ header.is-compact {
 
 .tab-item.is-active {
   background-color: rgba(66, 133, 244, 0.18);
+}
+
+.group-tab-list .tab-item {
+  border-bottom: none;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.group-tab-list .tab-item + .tab-item {
+  border-top: 1px solid #333;
 }
 
 .tab-favicon {

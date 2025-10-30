@@ -39,8 +39,14 @@
           <span>プレビューを有効にする</span>
         </label>
         <p class="option-description">
-          プレビューを無効にするとタブのスクリーンショットは保存されません。
+          プレビューを無効にしてもキャッシュは保持されます。必要に応じて下のボタンから削除できます。
         </p>
+        <div class="option-row option-row--button-row">
+          <button type="button" id="preview-cache-clear-btn" class="option-button">
+            プレビューキャッシュ画像を削除
+          </button>
+          <span id="preview-cache-size" class="option-meta" aria-live="polite">0 B</span>
+        </div>
       </div>
     </section>
   </div>
