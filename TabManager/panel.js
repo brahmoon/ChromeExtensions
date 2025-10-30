@@ -39,6 +39,15 @@ let activePreviewTabId = null;
 let previewRenderTimeout = null;
 let optionsViewOpen = false;
 
+function notifyPanelClosed() {
+  window.parent.postMessage({ type: 'TabManagerClosePanel' }, '*');
+  chrome.runtime
+    .sendMessage({ type: 'TabManagerPanelClosedByUser' })
+    .catch((error) => {
+      console.error('Failed to notify background about panel close:', error);
+    });
+}
+
 function postToParentMessage(type, detail = {}) {
   if (window.parent && window.parent !== window) {
     try {
@@ -708,12 +717,16 @@ async function refreshTabs() {
 }
 
 function attachEventListeners() {
-  document.getElementById('close-btn').addEventListener('click', () => {
-    window.parent.postMessage({ type: 'TabManagerClosePanel' }, '*');
-    chrome.runtime.sendMessage({ type: 'TabManagerPanelClosedByUser' }).catch((error) => {
-      console.error('Failed to notify background about panel close:', error);
-    });
-  });
+  const closeButton = document.getElementById('close-btn');
+  const collapseHandleButton = document.getElementById('collapse-handle-btn');
+
+  if (closeButton) {
+    closeButton.addEventListener('click', notifyPanelClosed);
+  }
+
+  if (collapseHandleButton) {
+    collapseHandleButton.addEventListener('click', notifyPanelClosed);
+  }
 
   chrome.tabs.onActivated.addListener(refreshTabs);
   chrome.tabs.onCreated.addListener(refreshTabs);
