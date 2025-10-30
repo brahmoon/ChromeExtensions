@@ -10,6 +10,7 @@ const PREVIEW_CLEAR_CACHE_MESSAGE = 'TabManagerClearPreviewCache';
 const PREVIEW_CAPTURE_OPTIONS = { format: 'jpeg', quality: 45 };
 const PREVIEW_QUEUE_DELAY_MS = 800;
 const PREVIEW_RETRY_DELAY_MS = 4000;
+const PREVIEW_POST_LOAD_CAPTURE_DELAY_MS = 350;
 const PREVIEW_MAX_CACHE_ENTRIES = 40;
 const PREVIEW_PROTOCOL_DENYLIST = [/^chrome:/i, /^edge:/i, /^about:/i, /^view-source:/i, /^devtools:/i];
 const EXTENSION_ELEMENT_ATTRIBUTE = 'data-tab-manager-element';
@@ -33,6 +34,7 @@ let previewQueue = [];
 const previewQueueSet = new Set();
 let previewProcessing = false;
 const previewRetryTimeouts = new Map();
+const activationCaptureTimeouts = new Map();
 let previewStateReadyPromise = initializePreviewState();
 
 async function loadPanelState() {
@@ -192,6 +194,85 @@ function clearPreviewRetry(tabId) {
   }
 }
 
+function clearActivationCaptureTimeout(tabId) {
+  const timeout = activationCaptureTimeouts.get(tabId);
+  if (!timeout) {
+    return;
+  }
+  clearTimeout(timeout);
+  activationCaptureTimeouts.delete(tabId);
+}
+
+function clearAllActivationCaptureTimeouts() {
+  activationCaptureTimeouts.forEach((timeout) => clearTimeout(timeout));
+  activationCaptureTimeouts.clear();
+}
+
+function scheduleActivationCapture(tabId, { delay = PREVIEW_POST_LOAD_CAPTURE_DELAY_MS } = {}) {
+  if (!previewEnabled || typeof tabId !== 'number') {
+    return;
+  }
+
+  clearActivationCaptureTimeout(tabId);
+
+  const timeout = setTimeout(async () => {
+    activationCaptureTimeouts.delete(tabId);
+    if (!previewEnabled) {
+      return;
+    }
+
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (
+        !tab ||
+        !tab.active ||
+        tab.status !== 'complete' ||
+        shouldSkipPreviewForUrl(tab.url) ||
+        tab.discarded
+      ) {
+        return;
+      }
+    } catch (error) {
+      const message = error?.message || '';
+      if (!message.includes('No tab with id') && !message.includes('The tab was closed')) {
+        console.debug('Failed to confirm tab before activation capture:', error);
+      }
+      return;
+    }
+
+    enqueuePreview(tabId, { priority: true });
+  }, Math.max(0, Number.isFinite(delay) ? delay : 0));
+
+  activationCaptureTimeouts.set(tabId, timeout);
+}
+
+async function handleActiveTabPreviewOnActivation(tabId) {
+  if (!previewEnabled || typeof tabId !== 'number') {
+    return;
+  }
+
+  clearActivationCaptureTimeout(tabId);
+
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch (error) {
+    const message = error?.message || '';
+    if (!message.includes('No tab with id') && !message.includes('The tab was closed')) {
+      console.debug('Failed to retrieve tab for activation preview:', error);
+    }
+    return;
+  }
+
+  if (!tab || tab.id !== tabId || shouldSkipPreviewForUrl(tab.url) || tab.discarded) {
+    return;
+  }
+
+  if (tab.status === 'complete') {
+    scheduleActivationCapture(tabId);
+  }
+}
+
 function notifyPreviewUpdated(tabId, preview, tab) {
   if (!preview || typeof preview.image !== 'string') {
     return;
@@ -266,6 +347,7 @@ async function recordPreview(tabId, tab, image) {
 }
 
 async function removePreview(tabId, { reason } = {}) {
+  clearActivationCaptureTimeout(tabId);
   const hadPreview = previewData.delete(tabId);
   if (reason === PREVIEW_REMOVAL_REASON_UNSUPPORTED) {
     unavailablePreviews.add(tabId);
@@ -573,12 +655,13 @@ async function queueAllOpenTabs({ prioritizeActive = false } = {}) {
       continue;
     }
 
-    if (!tab.active || previewData.has(tab.id)) {
+    if (!tab.active) {
       continue;
     }
 
-    const priority = prioritizeActive && Boolean(tab.active);
-    enqueuePreview(tab.id, { priority });
+    if (tab.status === 'complete') {
+      scheduleActivationCapture(tab.id);
+    }
   }
 }
 
@@ -633,6 +716,7 @@ async function setPreviewEnabled(enabled) {
     previewProcessing = false;
     previewRetryTimeouts.forEach((timeout) => clearTimeout(timeout));
     previewRetryTimeouts.clear();
+    clearAllActivationCaptureTimeouts();
     unavailablePreviews.clear();
     return;
   }
@@ -703,8 +787,8 @@ async function openPanelOnTab(tabId) {
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   await Promise.all([ensurePanelStateReady(), ensurePreviewStateReady()]);
 
-  if (previewEnabled && !previewData.has(tabId)) {
-    enqueuePreview(tabId, { priority: true });
+  if (previewEnabled) {
+    await handleActiveTabPreviewOnActivation(tabId);
   }
 
   if (!panelState.isOpen) {
@@ -738,8 +822,12 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     await removePreview(tabId, { reason: PREVIEW_REMOVAL_REASON_REFRESHED });
   }
 
-  if ((changeInfo.status === 'complete' || changeInfo.url) && tab && tab.active && !previewData.has(tabId)) {
-    enqueuePreview(tabId, { priority: true });
+  if (changeInfo.status === 'loading') {
+    clearActivationCaptureTimeout(tabId);
+  }
+
+  if (tab && tab.active && changeInfo.status === 'complete') {
+    scheduleActivationCapture(tabId);
   }
 });
 

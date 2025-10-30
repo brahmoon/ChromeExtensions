@@ -78,6 +78,60 @@ function createFaviconElement(tab) {
   return createPlaceholderFavicon(tab);
 }
 
+function updateAudioButtonState(button, { audible, muted }) {
+  if (!button) {
+    return;
+  }
+
+  const show = Boolean(audible || muted);
+  if (!show) {
+    button.hidden = true;
+    button.dataset.muted = 'false';
+    button.dataset.audible = 'false';
+    return;
+  }
+
+  const nextMuted = Boolean(muted);
+  const nextAudible = Boolean(audible);
+  button.hidden = false;
+  button.dataset.muted = nextMuted ? 'true' : 'false';
+  button.dataset.audible = nextAudible ? 'true' : 'false';
+
+  const label = nextMuted ? 'タブのミュートを解除' : 'タブをミュート';
+  button.textContent = nextMuted ? '🔇' : '🔊';
+  button.title = label;
+  button.setAttribute('aria-label', label);
+}
+
+function createAudioButton(tab) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'tab-audio-btn';
+
+  updateAudioButtonState(button, {
+    audible: Boolean(tab?.audible),
+    muted: Boolean(tab?.mutedInfo?.muted),
+  });
+
+  if (typeof tab?.id === 'number') {
+    button.addEventListener('click', async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const currentMuted = button.dataset.muted === 'true';
+      const currentAudible = button.dataset.audible === 'true';
+      try {
+        await chrome.tabs.update(tab.id, { muted: !currentMuted });
+        updateAudioButtonState(button, { audible: currentAudible, muted: !currentMuted });
+        refreshTabs();
+      } catch (error) {
+        console.error('Failed to toggle tab mute:', error);
+      }
+    });
+  }
+
+  return button;
+}
+
 function renderPreviewPlaceholder(message) {
   postToParentMessage(PREVIEW_OVERLAY_UPDATE_MESSAGE, {
     state: 'placeholder',
@@ -177,8 +231,11 @@ function createTabListItem(tab) {
     }
   });
 
+  const audioButton = createAudioButton(tab);
+
   li.appendChild(favicon);
   li.appendChild(content);
+  li.appendChild(audioButton);
   li.appendChild(closeButton);
   li.title = fullTitle;
 
@@ -662,7 +719,13 @@ function attachEventListeners() {
   chrome.tabs.onCreated.addListener(refreshTabs);
   chrome.tabs.onRemoved.addListener(refreshTabs);
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (changeInfo.status === 'complete' || changeInfo.title || changeInfo.url) {
+    if (
+      changeInfo.status === 'complete' ||
+      changeInfo.title ||
+      changeInfo.url ||
+      typeof changeInfo.audible === 'boolean' ||
+      (changeInfo.mutedInfo && typeof changeInfo.mutedInfo.muted === 'boolean')
+    ) {
       refreshTabs();
     }
   });
