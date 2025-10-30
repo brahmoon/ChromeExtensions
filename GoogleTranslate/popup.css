@@ -37,6 +37,33 @@ form {
   gap: 8px;
 }
 
+.language-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.language-control {
+  flex: 1 1 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.language-control select {
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid #d2d6dc;
+  font-size: 13px;
+  background-color: #fff;
+}
+
+.language-control select:focus {
+  outline: none;
+  border-color: #1a73e8;
+  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+
 label {
   font-weight: 600;
   font-size: 13px;
@@ -108,10 +135,34 @@ textarea:focus {
 
 .value {
   flex: 1;
+  white-space: pre-wrap;
 }
 
-.value.translated {
-  white-space: pre-wrap;
+.value.has-newline-indicators {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.newline-indicator {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: #e8f0fe;
+  border: 1px solid #c8dafc;
+  color: #1a73e8;
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .newline-indicator {
+    background: rgba(138, 180, 248, 0.24);
+    border-color: rgba(138, 180, 248, 0.4);
+    color: #8ab4f8;
+  }
 }
 
 .status {
