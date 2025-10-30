@@ -11,11 +11,6 @@ const PREVIEW_QUEUE_DELAY_MS = 800;
 const PREVIEW_RETRY_DELAY_MS = 4000;
 const PREVIEW_MAX_CACHE_ENTRIES = 40;
 const PREVIEW_PROTOCOL_DENYLIST = [/^chrome:/i, /^edge:/i, /^about:/i, /^view-source:/i, /^devtools:/i];
-const EXTENSION_ELEMENT_ATTRIBUTE = 'data-tab-manager-element';
-const PREVIEW_REMOVAL_REASON_UNSUPPORTED = 'unsupported';
-const PREVIEW_REMOVAL_REASON_CLOSED = 'closed';
-const PREVIEW_REMOVAL_REASON_REFRESHED = 'refreshed';
-const PREVIEW_REMOVAL_REASON_DISABLED = 'disabled';
 
 const panelStorageArea = chrome.storage.session ?? chrome.storage.local;
 
@@ -27,7 +22,6 @@ let panelState = {
 let panelStateReadyPromise = loadPanelState();
 let previewEnabled = false;
 const previewData = new Map();
-const unavailablePreviews = new Set();
 let previewQueue = [];
 const previewQueueSet = new Set();
 let previewProcessing = false;
@@ -102,7 +96,6 @@ async function initializePreviewState() {
     previewEnabled = Boolean(stored[PREVIEW_ENABLED_STORAGE_KEY]);
 
     previewData.clear();
-    unavailablePreviews.clear();
     const storedData = stored[PREVIEW_DATA_STORAGE_KEY];
     if (storedData && typeof storedData === 'object') {
       for (const [key, value] of Object.entries(storedData)) {
@@ -209,12 +202,11 @@ function notifyPreviewUpdated(tabId, preview, tab) {
     .catch(() => {});
 }
 
-function notifyPreviewRemoved(tabId, reason) {
+function notifyPreviewRemoved(tabId) {
   chrome.runtime
     .sendMessage({
       type: PREVIEW_REMOVED_MESSAGE,
       tabId,
-      reason: typeof reason === 'string' ? reason : undefined,
     })
     .catch(() => {});
 }
@@ -234,7 +226,6 @@ function trimPreviewCache(limit = PREVIEW_MAX_CACHE_ENTRIES) {
   while (entries.length > limit) {
     const [tabId] = entries.shift();
     if (previewData.delete(tabId)) {
-      unavailablePreviews.delete(tabId);
       removed.push(tabId);
     }
   }
@@ -243,7 +234,6 @@ function trimPreviewCache(limit = PREVIEW_MAX_CACHE_ENTRIES) {
 }
 
 async function recordPreview(tabId, tab, image) {
-  unavailablePreviews.delete(tabId);
   const preview = {
     image,
     url: tab?.url || '',
@@ -264,25 +254,15 @@ async function recordPreview(tabId, tab, image) {
   notifyPreviewUpdated(tabId, preview, tab);
 }
 
-async function removePreview(tabId, { reason } = {}) {
-  const hadPreview = previewData.delete(tabId);
-  if (reason === PREVIEW_REMOVAL_REASON_UNSUPPORTED) {
-    unavailablePreviews.add(tabId);
-  } else if (reason) {
-    unavailablePreviews.delete(tabId);
+async function removePreview(tabId) {
+  if (!previewData.delete(tabId)) {
+    return;
   }
-
   clearPreviewRetry(tabId);
   previewQueue = previewQueue.filter((id) => id !== tabId);
   previewQueueSet.delete(tabId);
-
-  if (hadPreview) {
-    await persistPreviewData();
-  }
-
-  if (hadPreview || reason) {
-    notifyPreviewRemoved(tabId, reason);
-  }
+  await persistPreviewData();
+  notifyPreviewRemoved(tabId);
 }
 
 function shouldSkipPreviewForUrl(url) {
@@ -304,13 +284,12 @@ async function toggleTabManagerVisibility(tabId, hidden) {
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      func: (shouldHide, attributeName) => {
-        if (typeof attributeName !== 'string' || attributeName.length === 0) {
-          return;
-        }
-
-        const selector = `[${attributeName}]`;
-        const elements = Array.from(document.querySelectorAll(selector));
+      func: (shouldHide) => {
+        const elements = [
+          document.getElementById('tab-manager-panel'),
+          document.getElementById('tab-manager-toggle'),
+          document.getElementById('tab-manager-preview-overlay'),
+        ];
 
         for (const element of elements) {
           if (!element) {
@@ -346,7 +325,7 @@ async function toggleTabManagerVisibility(tabId, hidden) {
           }
         }
       },
-      args: [Boolean(hidden), EXTENSION_ELEMENT_ATTRIBUTE],
+      args: [Boolean(hidden)],
     });
   } catch (error) {
     const message = error?.message || '';
@@ -393,12 +372,12 @@ async function capturePreviewForTab(tabId) {
   try {
     const tab = await chrome.tabs.get(tabId);
     if (!tab) {
-      await removePreview(tabId, { reason: PREVIEW_REMOVAL_REASON_CLOSED });
+      await removePreview(tabId);
       return 'removed';
     }
 
     if (shouldSkipPreviewForUrl(tab.url) || tab.discarded) {
-      await removePreview(tabId, { reason: PREVIEW_REMOVAL_REASON_UNSUPPORTED });
+      await removePreview(tabId);
       return 'removed';
     }
 
@@ -422,17 +401,8 @@ async function capturePreviewForTab(tabId) {
     }
 
     if (captureError) {
-      const captureMessage = String(captureError?.message || '');
-      if (!captureMessage.includes('No active tab')) {
+      if (!String(captureError?.message || '').includes('No active tab')) {
         console.error('Failed to capture preview:', captureError);
-      }
-      const lowerMessage = captureMessage.toLowerCase();
-      if (
-        lowerMessage.includes('permission') &&
-        (lowerMessage.includes('required') || lowerMessage.includes('activetab'))
-      ) {
-        await removePreview(tabId, { reason: PREVIEW_REMOVAL_REASON_UNSUPPORTED });
-        return 'removed';
       }
       return 'retry';
     }
@@ -446,7 +416,7 @@ async function capturePreviewForTab(tabId) {
   } catch (error) {
     const message = error?.message || '';
     if (message.includes('No tab with id') || message.includes('The tab was closed')) {
-      await removePreview(tabId, { reason: PREVIEW_REMOVAL_REASON_CLOSED });
+      await removePreview(tabId);
       return 'removed';
     }
     console.error('Unexpected error during preview capture:', error);
@@ -540,7 +510,7 @@ async function queueAllOpenTabs({ prioritizeActive = false } = {}) {
     }
 
     if (shouldSkipPreviewForUrl(tab.url)) {
-      await removePreview(tab.id, { reason: PREVIEW_REMOVAL_REASON_UNSUPPORTED });
+      await removePreview(tab.id);
       continue;
     }
 
@@ -611,12 +581,11 @@ async function setPreviewEnabled(enabled) {
     previewProcessing = false;
     previewRetryTimeouts.forEach((timeout) => clearTimeout(timeout));
     previewRetryTimeouts.clear();
-    unavailablePreviews.clear();
     const removedTabIds = Array.from(previewData.keys());
     previewData.clear();
     await persistPreviewData();
     removedTabIds.forEach((tabId) => {
-      notifyPreviewRemoved(tabId, PREVIEW_REMOVAL_REASON_DISABLED);
+      notifyPreviewRemoved(tabId);
     });
     return;
   } else {
@@ -708,7 +677,7 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
     updatePanelState({ tabId: null });
   }
 
-  await removePreview(tabId, { reason: PREVIEW_REMOVAL_REASON_CLOSED });
+  await removePreview(tabId);
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
@@ -719,7 +688,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   }
 
   if (changeInfo.url) {
-    await removePreview(tabId, { reason: PREVIEW_REMOVAL_REASON_REFRESHED });
+    await removePreview(tabId);
   }
 
   if ((changeInfo.status === 'complete' || changeInfo.url) && tab && tab.active) {
@@ -788,14 +757,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
 
-      if (unavailablePreviews.has(tabId)) {
-        sendResponse({ status: 'unavailable' });
-        return;
-      }
-
       const preview = previewData.get(tabId);
       if (preview && typeof preview.image === 'string') {
-        unavailablePreviews.delete(tabId);
         sendResponse({ status: 'ready', preview });
         enqueuePreview(tabId, { priority: Boolean(message.priority) });
         return;

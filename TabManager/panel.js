@@ -9,21 +9,17 @@ const PREVIEW_OVERLAY_UPDATE_MESSAGE = 'TabManagerPreviewOverlayUpdate';
 const PREVIEW_OVERLAY_VISIBILITY_MESSAGE = 'TabManagerPreviewOverlayVisibility';
 const PREVIEW_TOGGLE_ID = 'preview-toggle';
 const PROPERTY_BUTTON_ID = 'property-btn';
-const TAB_VIEW_ID = 'tab-view';
-const OPTIONS_VIEW_ID = 'options-view';
+const PROPERTY_POPOVER_ID = 'property-popover';
 const PREVIEW_LOADING_MESSAGE = 'プレビューを生成しています…';
 const PREVIEW_DEFAULT_MESSAGE = 'タブをホバーしてプレビューを表示';
-const PREVIEW_DISABLED_MESSAGE = '設定画面からプレビューを有効にしてください';
-const PREVIEW_UNAVAILABLE_MESSAGE = 'このタブのプレビュー画像は利用できません';
-const PREVIEW_REMOVAL_REASON_UNSUPPORTED = 'unsupported';
+const PREVIEW_DISABLED_MESSAGE = 'プロパティからプレビューを有効にしてください';
 const PREVIEW_RENDER_THROTTLE_MS = 150;
 
 let previewEnabled = false;
 let previewCache = {};
-const previewUnavailableTabs = new Set();
 let activePreviewTabId = null;
 let previewRenderTimeout = null;
-let optionsViewOpen = false;
+let propertyPopoverOpen = false;
 
 function postToParentMessage(type, detail = {}) {
   if (window.parent && window.parent !== window) {
@@ -102,11 +98,9 @@ function updatePreviewVisibility() {
 function updatePreviewCacheFromStorage(storageValue) {
   if (!storageValue || typeof storageValue !== 'object') {
     previewCache = {};
-    previewUnavailableTabs.clear();
     return;
   }
   previewCache = { ...storageValue };
-  previewUnavailableTabs.clear();
 }
 
 function updatePreviewToggleUI() {
@@ -127,7 +121,7 @@ function schedulePreviewRender(preview, tab) {
       return;
     }
     if (!preview || typeof preview.image !== 'string') {
-      renderPreviewPlaceholder(PREVIEW_UNAVAILABLE_MESSAGE);
+      renderPreviewPlaceholder(PREVIEW_LOADING_MESSAGE, { loading: true });
       return;
     }
     renderPreviewImage(preview, tab);
@@ -139,41 +133,19 @@ function handlePreviewResponse(tab, response) {
     return;
   }
 
-  const tabId = tab.id;
-
   if (!response) {
-    if (previewUnavailableTabs.has(tabId)) {
-      renderPreviewPlaceholder(PREVIEW_UNAVAILABLE_MESSAGE);
-    } else {
-      renderPreviewPlaceholder(PREVIEW_LOADING_MESSAGE, { loading: true });
-    }
+    renderPreviewPlaceholder(PREVIEW_LOADING_MESSAGE, { loading: true });
     return;
   }
 
   if (response.status === 'ready' && response.preview) {
-    if (typeof response.preview.image !== 'string' || response.preview.image.length === 0) {
-      previewUnavailableTabs.add(tabId);
-      renderPreviewPlaceholder(PREVIEW_UNAVAILABLE_MESSAGE);
-      return;
-    }
-    previewUnavailableTabs.delete(tabId);
     previewCache[String(tab.id)] = response.preview;
     schedulePreviewRender(response.preview, tab);
     return;
   }
 
-  if (response.status === 'unavailable') {
-    previewUnavailableTabs.add(tabId);
-    renderPreviewPlaceholder(PREVIEW_UNAVAILABLE_MESSAGE);
-    return;
-  }
-
   if (response.status === 'queued') {
-    if (previewUnavailableTabs.has(tabId)) {
-      renderPreviewPlaceholder(PREVIEW_UNAVAILABLE_MESSAGE);
-    } else {
-      renderPreviewPlaceholder(PREVIEW_LOADING_MESSAGE, { loading: true });
-    }
+    renderPreviewPlaceholder(PREVIEW_LOADING_MESSAGE, { loading: true });
   }
 }
 
@@ -193,11 +165,7 @@ function requestPreviewForTab(tab, { priority = false } = {}) {
       handlePreviewResponse(tab, response);
     })
     .catch(() => {
-      if (previewUnavailableTabs.has(tab.id)) {
-        renderPreviewPlaceholder(PREVIEW_UNAVAILABLE_MESSAGE);
-      } else {
-        renderPreviewPlaceholder(PREVIEW_LOADING_MESSAGE, { loading: true });
-      }
+      renderPreviewPlaceholder(PREVIEW_LOADING_MESSAGE, { loading: true });
     });
 }
 
@@ -214,17 +182,12 @@ function handleTabHover(tab) {
 
   const cached = previewCache[String(tab.id)];
   if (cached && typeof cached.image === 'string') {
-    previewUnavailableTabs.delete(tab.id);
     schedulePreviewRender(cached, tab);
     requestPreviewForTab(tab, { priority: true });
     return;
   }
 
-  if (previewUnavailableTabs.has(tab.id)) {
-    renderPreviewPlaceholder(PREVIEW_UNAVAILABLE_MESSAGE);
-  } else {
-    renderPreviewPlaceholder(PREVIEW_LOADING_MESSAGE, { loading: true });
-  }
+  renderPreviewPlaceholder(PREVIEW_LOADING_MESSAGE, { loading: true });
   requestPreviewForTab(tab, { priority: true });
 }
 
@@ -266,7 +229,6 @@ function applyPreviewSettings(enabled, { skipRefresh = false } = {}) {
       previewRenderTimeout = null;
     }
     activePreviewTabId = null;
-    previewUnavailableTabs.clear();
   }
   if (previewEnabled && !skipRefresh) {
     refreshTabs();
@@ -277,52 +239,65 @@ function getPropertyButton() {
   return document.getElementById(PROPERTY_BUTTON_ID);
 }
 
-function setPropertyButtonExpanded(expanded) {
-  const button = getPropertyButton();
-  if (!button) {
+function getPropertyPopover() {
+  return document.getElementById(PROPERTY_POPOVER_ID);
+}
+
+function openPropertyPopover() {
+  const popover = getPropertyPopover();
+  if (!popover || propertyPopoverOpen) {
     return;
   }
-  button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  popover.hidden = false;
+  propertyPopoverOpen = true;
+}
+
+function closePropertyPopover() {
+  const popover = getPropertyPopover();
+  if (!popover || !propertyPopoverOpen) {
+    return;
+  }
+  popover.hidden = true;
+  propertyPopoverOpen = false;
+}
+
+function togglePropertyPopover(forceState) {
+  if (typeof forceState === 'boolean') {
+    if (forceState) {
+      openPropertyPopover();
+    } else {
+      closePropertyPopover();
+    }
+    return;
+  }
+
+  if (propertyPopoverOpen) {
+    closePropertyPopover();
+  } else {
+    openPropertyPopover();
+  }
+}
+
+function handleDocumentClick(event) {
+  const target = event.target;
+  const popover = getPropertyPopover();
+  const button = getPropertyButton();
+  if (!popover || !propertyPopoverOpen) {
+    return;
+  }
+  if (button && (button === target || button.contains(target))) {
+    return;
+  }
+  if (popover === target || popover.contains(target)) {
+    return;
+  }
+  closePropertyPopover();
 }
 
 function handleKeydown(event) {
-  if (event.key === 'Escape' && optionsViewOpen) {
-    toggleOptionsView(false);
+  if (event.key === 'Escape') {
+    closePropertyPopover();
   }
-}
-
-function getOptionsView() {
-  return document.getElementById(OPTIONS_VIEW_ID);
-}
-
-function getTabView() {
-  return document.getElementById(TAB_VIEW_ID);
-}
-
-function applyOptionsViewState() {
-  const tabView = getTabView();
-  if (tabView) {
-    tabView.hidden = optionsViewOpen;
-    tabView.setAttribute('aria-hidden', optionsViewOpen ? 'true' : 'false');
-  }
-
-  const optionsView = getOptionsView();
-  if (optionsView) {
-    optionsView.hidden = !optionsViewOpen;
-    optionsView.setAttribute('aria-hidden', optionsViewOpen ? 'false' : 'true');
-  }
-
-  setPropertyButtonExpanded(optionsViewOpen);
-}
-
-function toggleOptionsView(forceState) {
-  const nextState =
-    typeof forceState === 'boolean' ? forceState : !optionsViewOpen;
-  if (nextState === optionsViewOpen) {
-    return;
-  }
-  optionsViewOpen = nextState;
-  applyOptionsViewState();
 }
 
 function handlePreviewToggleChange(event) {
@@ -333,14 +308,11 @@ function handlePreviewToggleChange(event) {
     .catch(() => {});
 }
 
-function setupOptionsControls() {
+function setupPropertyControls() {
   const button = getPropertyButton();
   if (button) {
-    setPropertyButtonExpanded(optionsViewOpen);
-    button.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      toggleOptionsView();
+    button.addEventListener('click', () => {
+      togglePropertyPopover();
     });
   }
 
@@ -349,9 +321,8 @@ function setupOptionsControls() {
     toggle.addEventListener('change', handlePreviewToggleChange);
   }
 
+  document.addEventListener('click', handleDocumentClick);
   window.addEventListener('keydown', handleKeydown);
-
-  applyOptionsViewState();
 }
 
 async function initializePreviewState() {
@@ -467,7 +438,7 @@ function attachEventListeners() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  setupOptionsControls();
+  setupPropertyControls();
   await initializePreviewState();
   attachEventListeners();
   setupHeaderBehavior();
@@ -502,7 +473,6 @@ chrome.runtime.onMessage.addListener((message) => {
     }
 
     previewCache[String(tabId)] = preview;
-    previewUnavailableTabs.delete(tabId);
 
     if (!previewEnabled || tabId !== activePreviewTabId) {
       return;
@@ -529,27 +499,13 @@ chrome.runtime.onMessage.addListener((message) => {
       return;
     }
     delete previewCache[String(tabId)];
-
-    const reason = typeof message.reason === 'string' ? message.reason : '';
-    previewUnavailableTabs.delete(tabId);
-    if (reason === PREVIEW_REMOVAL_REASON_UNSUPPORTED) {
-      previewUnavailableTabs.add(tabId);
-    }
-
     if (tabId === activePreviewTabId) {
-      if (reason === PREVIEW_REMOVAL_REASON_UNSUPPORTED) {
-        renderPreviewPlaceholder(PREVIEW_UNAVAILABLE_MESSAGE);
-        postToParentMessage(PREVIEW_OVERLAY_VISIBILITY_MESSAGE, { visible: true });
-      } else {
-        activePreviewTabId = null;
-        postToParentMessage(PREVIEW_OVERLAY_VISIBILITY_MESSAGE, {
-          visible: false,
-          immediate: true,
-        });
-        renderPreviewPlaceholder(
-          previewEnabled ? PREVIEW_DEFAULT_MESSAGE : PREVIEW_DISABLED_MESSAGE
-        );
-      }
+      activePreviewTabId = null;
+      postToParentMessage(PREVIEW_OVERLAY_VISIBILITY_MESSAGE, {
+        visible: false,
+        immediate: true,
+      });
+      renderPreviewPlaceholder(previewEnabled ? PREVIEW_DEFAULT_MESSAGE : PREVIEW_DISABLED_MESSAGE);
     }
   }
 });
