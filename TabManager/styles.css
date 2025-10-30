@@ -5,7 +5,6 @@ body {
   color: #eee;
   height: 100%;
   overflow: auto;
-  position: relative;
 }
 
 header {
@@ -56,41 +55,6 @@ header.is-compact {
 
 #close-btn:hover {
   background-color: rgba(255, 255, 255, 0.08);
-}
-
-#collapse-handle,
-#collapse-handle:focus {
-  outline: none;
-}
-
-#collapse-handle {
-  position: fixed;
-  top: 50%;
-  left: -20px;
-  transform: translateY(-50%);
-  width: 40px;
-  height: 80px;
-  border-radius: 0 40px 40px 0;
-  border: 1px solid #444;
-  border-left: none;
-  background-color: #303134;
-  color: #eee;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding-right: 8px;
-  font-size: 20px;
-  cursor: pointer;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);
-  z-index: 2;
-  user-select: none;
-  transition: background-color 0.2s ease-out, box-shadow 0.2s ease-out, transform 0.2s ease-out;
-}
-
-#collapse-handle:hover,
-#collapse-handle:focus-visible {
-  background-color: rgba(255, 255, 255, 0.12);
-  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.55);
 }
 
 #property-btn {
