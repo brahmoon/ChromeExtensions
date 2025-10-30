@@ -37,6 +37,33 @@ form {
   gap: 8px;
 }
 
+.language-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.language-control {
+  flex: 1 1 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.language-control select {
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid #d2d6dc;
+  font-size: 13px;
+  background-color: #fff;
+}
+
+.language-control select:focus {
+  outline: none;
+  border-color: #1a73e8;
+  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+
 label {
   font-weight: 600;
   font-size: 13px;
@@ -108,9 +135,6 @@ textarea:focus {
 
 .value {
   flex: 1;
-}
-
-.value.translated {
   white-space: pre-wrap;
 }
 
