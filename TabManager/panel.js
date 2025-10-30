@@ -38,9 +38,6 @@ const previewUnavailableTabs = new Set();
 let activePreviewTabId = null;
 let previewRenderTimeout = null;
 let optionsViewOpen = false;
-let hasAppliedInitialScrollPosition = false;
-let lastKnownTabListScrollTop = 0;
-let tabListScrollListenerAttached = false;
 
 function postToParentMessage(type, detail = {}) {
   if (window.parent && window.parent !== window) {
@@ -79,53 +76,6 @@ function createFaviconElement(tab) {
   }
 
   return createPlaceholderFavicon(tab);
-}
-
-function isTabMuted(tab) {
-  return Boolean(tab?.mutedInfo && typeof tab.mutedInfo === 'object' && tab.mutedInfo.muted);
-}
-
-function shouldShowAudioButton(tab) {
-  return Boolean(tab?.audible || isTabMuted(tab));
-}
-
-function updateAudioButtonVisual(button, tab) {
-  const muted = isTabMuted(tab);
-  button.textContent = muted ? '🔇' : '🔊';
-  button.title = muted ? 'タブのミュートを解除' : 'タブをミュート';
-  button.setAttribute('aria-pressed', muted ? 'true' : 'false');
-  button.classList.toggle('is-muted', muted);
-}
-
-function createAudioToggleButton(tab) {
-  if (!tab || typeof tab.id !== 'number' || !shouldShowAudioButton(tab)) {
-    return null;
-  }
-
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'tab-audio-btn';
-  updateAudioButtonVisual(button, tab);
-
-  button.addEventListener('click', async (event) => {
-    event.stopPropagation();
-
-    const nextMuted = !isTabMuted(tab);
-
-    try {
-      await chrome.tabs.update(tab.id, { muted: nextMuted });
-      if (!tab.mutedInfo || typeof tab.mutedInfo !== 'object') {
-        tab.mutedInfo = { muted: nextMuted };
-      } else {
-        tab.mutedInfo.muted = nextMuted;
-      }
-      updateAudioButtonVisual(button, tab);
-    } catch (error) {
-      console.error('Failed to toggle tab mute state:', error);
-    }
-  });
-
-  return button;
 }
 
 function renderPreviewPlaceholder(message) {
@@ -213,8 +163,6 @@ function createTabListItem(tab) {
   content.textContent = fullTitle;
   content.title = fullTitle;
 
-  const audioButton = createAudioToggleButton(tab);
-
   const closeButton = document.createElement('button');
   closeButton.className = 'tab-close-btn';
   closeButton.type = 'button';
@@ -231,9 +179,6 @@ function createTabListItem(tab) {
 
   li.appendChild(favicon);
   li.appendChild(content);
-  if (audioButton) {
-    li.appendChild(audioButton);
-  }
   li.appendChild(closeButton);
   li.title = fullTitle;
 
@@ -259,124 +204,6 @@ function createTabListItem(tab) {
   });
 
   return li;
-}
-
-function attachTabListScrollTracking(list) {
-  if (!list || tabListScrollListenerAttached) {
-    return;
-  }
-
-  list.addEventListener(
-    'scroll',
-    () => {
-      lastKnownTabListScrollTop = list.scrollTop;
-      hasAppliedInitialScrollPosition = true;
-    },
-    { passive: true }
-  );
-
-  tabListScrollListenerAttached = true;
-}
-
-function ensureGroupExpandedForTab(tabElement) {
-  if (!tabElement) {
-    return;
-  }
-
-  const groupList = tabElement.closest('.group-tab-list');
-  if (!groupList || !groupList.hidden) {
-    return;
-  }
-
-  groupList.hidden = false;
-  const headerButton = groupList.previousElementSibling;
-  if (headerButton && headerButton.classList.contains('group-header')) {
-    headerButton.setAttribute('aria-expanded', 'true');
-  }
-}
-
-function determineInitialCenterTabId(tabs) {
-  if (!Array.isArray(tabs) || tabs.length === 0) {
-    return null;
-  }
-
-  let bestTab = null;
-
-  for (const tab of tabs) {
-    if (!tab || typeof tab.id !== 'number') {
-      continue;
-    }
-
-    if (!bestTab) {
-      bestTab = tab;
-      continue;
-    }
-
-    const bestIsActive = Boolean(bestTab.active);
-    const tabIsActive = Boolean(tab.active);
-
-    if (tabIsActive && !bestIsActive) {
-      bestTab = tab;
-      continue;
-    }
-
-    if (bestIsActive && !tabIsActive) {
-      continue;
-    }
-
-    const bestLastAccessed =
-      typeof bestTab.lastAccessed === 'number' ? bestTab.lastAccessed : -Infinity;
-    const tabLastAccessed = typeof tab.lastAccessed === 'number' ? tab.lastAccessed : -Infinity;
-
-    if (tabLastAccessed > bestLastAccessed) {
-      bestTab = tab;
-      continue;
-    }
-
-    if (tabLastAccessed === bestLastAccessed && tabIsActive && !bestIsActive) {
-      bestTab = tab;
-    }
-  }
-
-  if (bestTab && typeof bestTab.id === 'number') {
-    return bestTab.id;
-  }
-
-  return null;
-}
-
-function centerActiveTabInList(list, fallbackScrollTop = 0, targetTabId = null) {
-  if (!list) {
-    return false;
-  }
-
-  let targetItem = null;
-  if (targetTabId != null) {
-    targetItem = list.querySelector(`.tab-item[data-tab-id="${String(targetTabId)}"]`);
-  }
-
-  if (!targetItem) {
-    targetItem = list.querySelector('.tab-item.is-active');
-  }
-
-  if (!targetItem) {
-    const maxScrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
-    const clampedFallback = Math.max(0, Math.min(fallbackScrollTop, maxScrollTop));
-    list.scrollTop = clampedFallback;
-    return false;
-  }
-
-  ensureGroupExpandedForTab(targetItem);
-
-  const listRect = list.getBoundingClientRect();
-  const itemRect = targetItem.getBoundingClientRect();
-  const offsetWithinList = itemRect.top - listRect.top + list.scrollTop;
-  const desiredScrollTop =
-    offsetWithinList - Math.max(0, (list.clientHeight - targetItem.offsetHeight) / 2);
-  const maxScrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
-  const clampedScrollTop = Math.max(0, Math.min(desiredScrollTop, maxScrollTop));
-  list.scrollTop = clampedScrollTop;
-  return true;
 }
 
 function createGroupAccordion(groupId, groupInfo, tabs) {
@@ -760,9 +587,6 @@ async function refreshTabs() {
   if (!list) {
     return;
   }
-  attachTabListScrollTracking(list);
-  const previousScrollTop = lastKnownTabListScrollTop = list.scrollTop;
-  const shouldCenterActiveTab = !hasAppliedInitialScrollPosition;
   list.innerHTML = '';
 
   const tabIdsForQueue = [];
@@ -824,21 +648,6 @@ async function refreshTabs() {
   }
 
   syncPreviewQueue(tabIdsForQueue);
-
-  let centerTabId = null;
-  if (shouldCenterActiveTab) {
-    centerTabId = determineInitialCenterTabId(tabs);
-  }
-
-  if (shouldCenterActiveTab) {
-    hasAppliedInitialScrollPosition = centerActiveTabInList(list, previousScrollTop, centerTabId);
-  } else {
-    const maxScrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
-    const nextScrollTop = Math.max(0, Math.min(previousScrollTop, maxScrollTop));
-    list.scrollTop = nextScrollTop;
-  }
-
-  lastKnownTabListScrollTop = list.scrollTop;
 }
 
 function attachEventListeners() {
@@ -853,13 +662,7 @@ function attachEventListeners() {
   chrome.tabs.onCreated.addListener(refreshTabs);
   chrome.tabs.onRemoved.addListener(refreshTabs);
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (
-      changeInfo.status === 'complete' ||
-      changeInfo.title ||
-      changeInfo.url ||
-      changeInfo.audible !== undefined ||
-      changeInfo.mutedInfo
-    ) {
+    if (changeInfo.status === 'complete' || changeInfo.title || changeInfo.url) {
       refreshTabs();
     }
   });
