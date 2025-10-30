@@ -8,12 +8,21 @@ body {
 }
 
 header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   justify-content: space-between;
   align-items: center;
   background-color: #303134;
   padding: 8px 10px;
   border-bottom: 1px solid #444;
+  transition: padding 0.25s ease, box-shadow 0.25s ease;
+}
+
+header.is-compact {
+  padding: 4px 10px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
 }
 
 #close-btn,
