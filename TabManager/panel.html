@@ -8,9 +8,29 @@
 <body>
   <header>
     <h2>Tab Manager</h2>
-    <button id="close-btn">&gt;</button>
+    <div class="header-actions">
+      <button id="properties-btn" aria-expanded="false" title="プロパティ">⚙</button>
+      <button id="close-btn">&gt;</button>
+    </div>
   </header>
-  <ul id="tab-list"></ul>
+  <section id="properties-panel" aria-hidden="true">
+    <label class="property-toggle">
+      <input type="checkbox" id="preview-toggle">
+      <span>プレビューを有効にする</span>
+    </label>
+  </section>
+  <div id="panel-content">
+    <aside id="preview-container" aria-hidden="true">
+      <div id="preview-placeholder">タブにカーソルを合わせるとここにプレビューが表示されます</div>
+      <iframe
+        id="preview-frame"
+        title="タブのプレビュー"
+        sandbox="allow-same-origin"
+        scrolling="no"
+      ></iframe>
+    </aside>
+    <ul id="tab-list"></ul>
+  </div>
   <script src="panel.js"></script>
 </body>
 </html>
