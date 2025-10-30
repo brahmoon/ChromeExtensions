@@ -110,5 +110,21 @@ function attachEventListeners() {
 
 document.addEventListener('DOMContentLoaded', () => {
   attachEventListeners();
+  setupHeaderBehavior();
   refreshTabs();
 });
+
+function setupHeaderBehavior() {
+  const header = document.querySelector('header');
+  if (!header) {
+    return;
+  }
+
+  const updateHeaderState = () => {
+    const shouldBeCompact = window.scrollY > 0;
+    header.classList.toggle('is-compact', shouldBeCompact);
+  };
+
+  window.addEventListener('scroll', updateHeaderState, { passive: true });
+  updateHeaderState();
+}
