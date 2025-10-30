@@ -8,17 +8,11 @@ const sourceTextElement = document.getElementById('source-text');
 const translatedTextElement = document.getElementById('translated-text');
 const updatedAtElement = document.getElementById('updated-at');
 const resizeHandle = document.getElementById('resize-handle');
-const sourceLanguageSelect = document.getElementById('source-language');
-const targetLanguageSelect = document.getElementById('target-language');
 
 const WIDTH_STORAGE_KEY = 'popupWidth';
 const HEIGHT_STORAGE_KEY = 'popupHeight';
-const SOURCE_LANGUAGE_STORAGE_KEY = 'preferredSourceLanguage';
-const TARGET_LANGUAGE_STORAGE_KEY = 'preferredTargetLanguage';
 const MIN_POPUP_WIDTH = 320;
 const MIN_POPUP_HEIGHT = 240;
-const DEFAULT_SOURCE_LANGUAGE = 'auto';
-const DEFAULT_TARGET_LANGUAGE = 'ja';
 
 function clampDimension(value, minimum) {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -178,64 +172,6 @@ function setStatus(message, kind = 'info') {
   statusElement.dataset.kind = kind;
 }
 
-function createNewlineTokenLabel(token) {
-  switch (token) {
-    case '\r\n':
-      return { label: '⏎ CRLF', type: 'crlf' };
-    case '\r':
-      return { label: '⏎ CR', type: 'cr' };
-    case '\n':
-    default:
-      return { label: '⏎ LF', type: 'lf' };
-  }
-}
-
-function renderTextWithVisibleNewlines(element, text) {
-  if (!element) {
-    return;
-  }
-
-  element.replaceChildren();
-
-  if (!text) {
-    return;
-  }
-
-  const fragment = document.createDocumentFragment();
-  const newlinePattern = /\r\n|\r|\n/g;
-  let lastIndex = 0;
-  let match;
-
-  while ((match = newlinePattern.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      fragment.append(text.slice(lastIndex, match.index));
-    }
-
-    const token = match[0];
-    const { label, type } = createNewlineTokenLabel(token);
-    const marker = document.createElement('span');
-    marker.className = 'newline-token';
-    marker.dataset.type = type;
-    marker.setAttribute('role', 'img');
-    marker.setAttribute('aria-label', `改行 (${label.replace('⏎ ', '')})`);
-    marker.title = label.replace('⏎ ', '');
-    marker.textContent = label;
-    fragment.append(marker);
-
-    const lineBreak = document.createElement('br');
-    lineBreak.setAttribute('aria-hidden', 'true');
-    fragment.append(lineBreak);
-
-    lastIndex = match.index + token.length;
-  }
-
-  if (lastIndex < text.length) {
-    fragment.append(text.slice(lastIndex));
-  }
-
-  element.append(fragment);
-}
-
 function formatLanguage(code) {
   if (!code || code === 'auto') {
     return '自動判別';
@@ -258,95 +194,17 @@ function showResult(data) {
   if (!data) {
     resultWrapper.hidden = true;
     detectedLanguageElement.textContent = '';
-    renderTextWithVisibleNewlines(sourceTextElement, '');
-    renderTextWithVisibleNewlines(translatedTextElement, '');
+    sourceTextElement.textContent = '';
+    translatedTextElement.textContent = '';
     updatedAtElement.textContent = '';
     return;
   }
 
-  detectedLanguageElement.textContent = formatLanguage(
-    data.detectedSourceLanguage || data.requestedSourceLanguage
-  );
-  renderTextWithVisibleNewlines(sourceTextElement, data.sourceText || '');
-  renderTextWithVisibleNewlines(translatedTextElement, data.translatedText || '');
+  detectedLanguageElement.textContent = formatLanguage(data.detectedSourceLanguage);
+  sourceTextElement.textContent = data.sourceText || '';
+  translatedTextElement.textContent = data.translatedText || '';
   updatedAtElement.textContent = formatDate(data.updatedAt);
   resultWrapper.hidden = false;
-}
-
-function setSelectValue(selectElement, value, fallback) {
-  if (!selectElement) {
-    return fallback;
-  }
-  const options = Array.from(selectElement.options).map((option) => option.value);
-  const nextValue = options.includes(value) ? value : fallback;
-  selectElement.value = nextValue;
-  return nextValue;
-}
-
-function persistPreferredLanguages(sourceLanguage, targetLanguage) {
-  const storageArea = chrome?.storage?.local;
-  if (!storageArea) {
-    return;
-  }
-  const payload = {};
-  if (typeof sourceLanguage === 'string' && sourceLanguage) {
-    payload[SOURCE_LANGUAGE_STORAGE_KEY] = sourceLanguage;
-  }
-  if (typeof targetLanguage === 'string' && targetLanguage) {
-    payload[TARGET_LANGUAGE_STORAGE_KEY] = targetLanguage;
-  }
-  if (!Object.keys(payload).length) {
-    return;
-  }
-  try {
-    const maybePromise = storageArea.set(payload, () => {
-      const error = chrome.runtime?.lastError;
-      if (error) {
-        console.error('Failed to save language preference', error);
-      }
-    });
-    if (maybePromise && typeof maybePromise.catch === 'function') {
-      maybePromise.catch((error) => console.error('Failed to save language preference', error));
-    }
-  } catch (error) {
-    console.error('Failed to save language preference', error);
-  }
-}
-
-async function loadPreferredLanguages() {
-  const storageArea = chrome?.storage?.local;
-  if (!storageArea) {
-    setSelectValue(sourceLanguageSelect, DEFAULT_SOURCE_LANGUAGE, DEFAULT_SOURCE_LANGUAGE);
-    setSelectValue(targetLanguageSelect, DEFAULT_TARGET_LANGUAGE, DEFAULT_TARGET_LANGUAGE);
-    return;
-  }
-  try {
-    const stored = await new Promise((resolve, reject) => {
-      const callback = (items) => {
-        const error = chrome.runtime?.lastError;
-        if (error) {
-          reject(new Error(error.message));
-        } else {
-          resolve(items);
-        }
-      };
-      const maybePromise = storageArea.get(
-        [SOURCE_LANGUAGE_STORAGE_KEY, TARGET_LANGUAGE_STORAGE_KEY],
-        callback
-      );
-      if (maybePromise && typeof maybePromise.then === 'function') {
-        maybePromise.then(resolve).catch(reject);
-      }
-    });
-    const storedSource = stored?.[SOURCE_LANGUAGE_STORAGE_KEY];
-    const storedTarget = stored?.[TARGET_LANGUAGE_STORAGE_KEY];
-    setSelectValue(sourceLanguageSelect, storedSource, DEFAULT_SOURCE_LANGUAGE);
-    setSelectValue(targetLanguageSelect, storedTarget, DEFAULT_TARGET_LANGUAGE);
-  } catch (error) {
-    console.error('Failed to load language preference', error);
-    setSelectValue(sourceLanguageSelect, DEFAULT_SOURCE_LANGUAGE, DEFAULT_SOURCE_LANGUAGE);
-    setSelectValue(targetLanguageSelect, DEFAULT_TARGET_LANGUAGE, DEFAULT_TARGET_LANGUAGE);
-  }
 }
 
 async function loadLatestTranslation() {
@@ -355,16 +213,6 @@ async function loadLatestTranslation() {
     if (response?.ok && response.data) {
       showResult(response.data);
       textInput.value = response.data.sourceText || '';
-      if (response.data.requestedSourceLanguage) {
-        setSelectValue(
-          sourceLanguageSelect,
-          response.data.requestedSourceLanguage,
-          DEFAULT_SOURCE_LANGUAGE
-        );
-      }
-      if (response.data.targetLanguage) {
-        setSelectValue(targetLanguageSelect, response.data.targetLanguage, DEFAULT_TARGET_LANGUAGE);
-      }
     }
   } catch (error) {
     console.error('Failed to load latest translation', error);
@@ -375,16 +223,7 @@ async function requestTranslation(text, origin) {
   translateButton.disabled = true;
   setStatus('翻訳中...', 'progress');
   try {
-    const sourceLanguage = sourceLanguageSelect?.value || DEFAULT_SOURCE_LANGUAGE;
-    const targetLanguage = targetLanguageSelect?.value || DEFAULT_TARGET_LANGUAGE;
-    persistPreferredLanguages(sourceLanguage, targetLanguage);
-    const response = await chrome.runtime.sendMessage({
-      type: 'translateText',
-      text,
-      origin,
-      sourceLanguage,
-      targetLanguage
-    });
+    const response = await chrome.runtime.sendMessage({ type: 'translateText', text, origin });
     if (!response?.ok) {
       throw new Error(response?.error || '翻訳に失敗しました。');
     }
@@ -401,8 +240,8 @@ async function requestTranslation(text, origin) {
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const text = textInput.value;
-  if (!text.trim()) {
+  const text = textInput.value.trim();
+  if (!text) {
     setStatus('テキストを入力してください。', 'error');
     return;
   }
@@ -420,38 +259,11 @@ chrome.runtime.onMessage.addListener((message) => {
       textInput.value = message.data.sourceText || '';
       setStatus('選択したテキストを翻訳しました。', 'success');
     }
-    if (message.data?.requestedSourceLanguage) {
-      setSelectValue(
-        sourceLanguageSelect,
-        message.data.requestedSourceLanguage,
-        DEFAULT_SOURCE_LANGUAGE
-      );
-    }
-    if (message.data?.targetLanguage) {
-      setSelectValue(targetLanguageSelect, message.data.targetLanguage, DEFAULT_TARGET_LANGUAGE);
-    }
   } else if (message?.type === 'translationError') {
     setStatus(message.error || '翻訳に失敗しました。', 'error');
   }
 });
 
 loadLatestTranslation();
-loadPreferredLanguages();
 restorePopupSize();
 setupResizeHandle();
-
-if (sourceLanguageSelect) {
-  sourceLanguageSelect.addEventListener('change', () => {
-    const sourceLanguage = sourceLanguageSelect.value || DEFAULT_SOURCE_LANGUAGE;
-    const targetLanguage = targetLanguageSelect?.value || DEFAULT_TARGET_LANGUAGE;
-    persistPreferredLanguages(sourceLanguage, targetLanguage);
-  });
-}
-
-if (targetLanguageSelect) {
-  targetLanguageSelect.addEventListener('change', () => {
-    const sourceLanguage = sourceLanguageSelect?.value || DEFAULT_SOURCE_LANGUAGE;
-    const targetLanguage = targetLanguageSelect.value || DEFAULT_TARGET_LANGUAGE;
-    persistPreferredLanguages(sourceLanguage, targetLanguage);
-  });
-}
