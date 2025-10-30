@@ -1,4 +1,16 @@
 const PANEL_STATE_KEY = 'tabManagerPanelState';
+const PREVIEW_ENABLED_STORAGE_KEY = 'tabManagerPreviewEnabled';
+const PREVIEW_DATA_STORAGE_KEY = 'tabManagerPreviewData';
+const PREVIEW_REQUEST_MESSAGE = 'TabManagerRequestPreview';
+const PREVIEW_SYNC_MESSAGE = 'TabManagerSyncPreviewOrder';
+const PREVIEW_SET_ENABLED_MESSAGE = 'TabManagerSetPreviewEnabled';
+const PREVIEW_UPDATED_MESSAGE = 'TabManagerPreviewUpdated';
+const PREVIEW_REMOVED_MESSAGE = 'TabManagerPreviewRemoved';
+const PREVIEW_CAPTURE_OPTIONS = { format: 'jpeg', quality: 45 };
+const PREVIEW_QUEUE_DELAY_MS = 800;
+const PREVIEW_RETRY_DELAY_MS = 4000;
+const PREVIEW_MAX_CACHE_ENTRIES = 40;
+const PREVIEW_PROTOCOL_DENYLIST = [/^chrome:/i, /^edge:/i, /^about:/i, /^view-source:/i, /^devtools:/i];
 
 const panelStorageArea = chrome.storage.session ?? chrome.storage.local;
 
@@ -8,6 +20,13 @@ let panelState = {
 };
 
 let panelStateReadyPromise = loadPanelState();
+let previewEnabled = false;
+const previewData = new Map();
+let previewQueue = [];
+const previewQueueSet = new Set();
+let previewProcessing = false;
+const previewRetryTimeouts = new Map();
+let previewStateReadyPromise = initializePreviewState();
 
 async function loadPanelState() {
   try {
@@ -67,6 +86,442 @@ function updatePanelState(partial) {
   });
 }
 
+async function initializePreviewState() {
+  try {
+    const stored = await chrome.storage.local.get({
+      [PREVIEW_ENABLED_STORAGE_KEY]: true,
+      [PREVIEW_DATA_STORAGE_KEY]: {},
+    });
+
+    previewEnabled = Boolean(stored[PREVIEW_ENABLED_STORAGE_KEY]);
+
+    previewData.clear();
+    const storedData = stored[PREVIEW_DATA_STORAGE_KEY];
+    if (storedData && typeof storedData === 'object') {
+      for (const [key, value] of Object.entries(storedData)) {
+        const tabId = Number(key);
+        if (!Number.isFinite(tabId)) {
+          continue;
+        }
+        if (!value || typeof value !== 'object' || typeof value.image !== 'string') {
+          continue;
+        }
+        previewData.set(tabId, {
+          image: value.image,
+          url: typeof value.url === 'string' ? value.url : '',
+          title: typeof value.title === 'string' ? value.title : '',
+          capturedAt: Number.isFinite(value.capturedAt) ? Number(value.capturedAt) : Date.now(),
+        });
+      }
+    }
+
+    if (previewEnabled) {
+      queueAllOpenTabs({ prioritizeActive: true }).catch((error) => {
+        console.error('Failed to enqueue initial previews:', error);
+      });
+    }
+  } catch (error) {
+    console.error('Failed to initialise preview state:', error);
+    previewEnabled = true;
+    previewData.clear();
+    queueAllOpenTabs({ prioritizeActive: true }).catch((queueError) => {
+      console.error('Failed to enqueue previews after state fallback:', queueError);
+    });
+  }
+}
+
+async function ensurePreviewStateReady() {
+  try {
+    await previewStateReadyPromise;
+  } catch (error) {
+    console.error('Preview state initialisation failed, retrying:', error);
+    previewStateReadyPromise = initializePreviewState();
+    await previewStateReadyPromise;
+  }
+}
+
+async function persistPreviewEnabled() {
+  try {
+    await chrome.storage.local.set({
+      [PREVIEW_ENABLED_STORAGE_KEY]: previewEnabled,
+    });
+  } catch (error) {
+    console.error('Failed to persist preview preference:', error);
+  }
+}
+
+function getPreviewStorageObject() {
+  const result = {};
+  for (const [tabId, data] of previewData.entries()) {
+    if (!data || typeof data !== 'object' || typeof data.image !== 'string') {
+      continue;
+    }
+    result[String(tabId)] = {
+      image: data.image,
+      url: typeof data.url === 'string' ? data.url : '',
+      title: typeof data.title === 'string' ? data.title : '',
+      capturedAt: Number.isFinite(data.capturedAt) ? Number(data.capturedAt) : Date.now(),
+    };
+  }
+  return result;
+}
+
+async function persistPreviewData() {
+  try {
+    await chrome.storage.local.set({
+      [PREVIEW_DATA_STORAGE_KEY]: getPreviewStorageObject(),
+    });
+  } catch (error) {
+    console.error('Failed to persist preview data:', error);
+  }
+}
+
+function clearPreviewRetry(tabId) {
+  const timeout = previewRetryTimeouts.get(tabId);
+  if (timeout) {
+    clearTimeout(timeout);
+    previewRetryTimeouts.delete(tabId);
+  }
+}
+
+function notifyPreviewUpdated(tabId, preview, tab) {
+  if (!preview || typeof preview.image !== 'string') {
+    return;
+  }
+
+  chrome.runtime
+    .sendMessage({
+      type: PREVIEW_UPDATED_MESSAGE,
+      tabId,
+      preview,
+      tabInfo: {
+        title: tab?.title || '',
+        url: tab?.url || '',
+      },
+    })
+    .catch(() => {});
+}
+
+function notifyPreviewRemoved(tabId) {
+  chrome.runtime
+    .sendMessage({
+      type: PREVIEW_REMOVED_MESSAGE,
+      tabId,
+    })
+    .catch(() => {});
+}
+
+function trimPreviewCache(limit = PREVIEW_MAX_CACHE_ENTRIES) {
+  if (previewData.size <= limit) {
+    return [];
+  }
+
+  const entries = Array.from(previewData.entries()).sort((a, b) => {
+    const aTime = Number.isFinite(a[1]?.capturedAt) ? Number(a[1].capturedAt) : 0;
+    const bTime = Number.isFinite(b[1]?.capturedAt) ? Number(b[1].capturedAt) : 0;
+    return aTime - bTime;
+  });
+
+  const removed = [];
+  while (entries.length > limit) {
+    const [tabId] = entries.shift();
+    if (previewData.delete(tabId)) {
+      removed.push(tabId);
+    }
+  }
+
+  return removed;
+}
+
+async function recordPreview(tabId, tab, image) {
+  const preview = {
+    image,
+    url: tab?.url || '',
+    title: tab?.title || '',
+    capturedAt: Date.now(),
+  };
+
+  previewData.set(tabId, preview);
+  const removed = trimPreviewCache();
+  if (removed.length > 0) {
+    removed.forEach((id) => {
+      clearPreviewRetry(id);
+      notifyPreviewRemoved(id);
+    });
+  }
+
+  await persistPreviewData();
+  notifyPreviewUpdated(tabId, preview, tab);
+}
+
+async function removePreview(tabId) {
+  if (!previewData.delete(tabId)) {
+    return;
+  }
+  clearPreviewRetry(tabId);
+  previewQueue = previewQueue.filter((id) => id !== tabId);
+  previewQueueSet.delete(tabId);
+  await persistPreviewData();
+  notifyPreviewRemoved(tabId);
+}
+
+function shouldSkipPreviewForUrl(url) {
+  if (typeof url !== 'string' || url.length === 0) {
+    return true;
+  }
+  return PREVIEW_PROTOCOL_DENYLIST.some((pattern) => pattern.test(url));
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function moveTabToQueueFront(tabId) {
+  const index = previewQueue.indexOf(tabId);
+  if (index > 0) {
+    previewQueue.splice(index, 1);
+    previewQueue.unshift(tabId);
+  }
+}
+
+function schedulePreviewRetry(tabId) {
+  if (previewRetryTimeouts.has(tabId) || !previewEnabled) {
+    return;
+  }
+
+  const timeout = setTimeout(() => {
+    previewRetryTimeouts.delete(tabId);
+    if (!previewEnabled) {
+      return;
+    }
+    enqueuePreview(tabId);
+  }, PREVIEW_RETRY_DELAY_MS);
+
+  previewRetryTimeouts.set(tabId, timeout);
+}
+
+async function capturePreviewForTab(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab) {
+      await removePreview(tabId);
+      return false;
+    }
+
+    if (shouldSkipPreviewForUrl(tab.url) || tab.discarded) {
+      await removePreview(tabId);
+      return false;
+    }
+
+    if (tab.status === 'loading') {
+      return false;
+    }
+
+    if (!tab.active) {
+      return false;
+    }
+
+    let image;
+    try {
+      image = await chrome.tabs.captureVisibleTab(tab.windowId, PREVIEW_CAPTURE_OPTIONS);
+    } catch (error) {
+      if (!String(error?.message || '').includes('No active tab')) {
+        console.error('Failed to capture preview:', error);
+      }
+      return false;
+    }
+
+    if (typeof image !== 'string' || image.length === 0) {
+      return false;
+    }
+
+    await recordPreview(tabId, tab, image);
+    return true;
+  } catch (error) {
+    const message = error?.message || '';
+    if (message.includes('No tab with id') || message.includes('The tab was closed')) {
+      await removePreview(tabId);
+      return false;
+    }
+    console.error('Unexpected error during preview capture:', error);
+    return false;
+  }
+}
+
+function enqueuePreview(tabId, { priority = false } = {}) {
+  if (!previewEnabled || typeof tabId !== 'number') {
+    return;
+  }
+
+  clearPreviewRetry(tabId);
+
+  if (previewQueueSet.has(tabId)) {
+    if (priority) {
+      moveTabToQueueFront(tabId);
+    }
+    processPreviewQueue().catch((error) => {
+      console.error('Failed to process preview queue:', error);
+    });
+    return;
+  }
+
+  if (priority) {
+    previewQueue.unshift(tabId);
+  } else {
+    previewQueue.push(tabId);
+  }
+  previewQueueSet.add(tabId);
+
+  processPreviewQueue().catch((error) => {
+    console.error('Failed to start preview queue:', error);
+  });
+}
+
+async function processPreviewQueue() {
+  await ensurePreviewStateReady();
+  if (!previewEnabled || previewProcessing) {
+    return;
+  }
+
+  previewProcessing = true;
+
+  try {
+    while (previewEnabled && previewQueue.length > 0) {
+      const tabId = previewQueue.shift();
+      previewQueueSet.delete(tabId);
+
+      const success = await capturePreviewForTab(tabId);
+      if (!success && previewEnabled) {
+        schedulePreviewRetry(tabId);
+      }
+
+      if (previewQueue.length > 0) {
+        await delay(PREVIEW_QUEUE_DELAY_MS);
+      }
+    }
+  } catch (error) {
+    console.error('Preview queue processing error:', error);
+  } finally {
+    previewProcessing = false;
+    if (previewEnabled && previewQueue.length > 0) {
+      setTimeout(() => {
+        processPreviewQueue().catch((queueError) => {
+          console.error('Failed to resume preview queue:', queueError);
+        });
+      }, PREVIEW_QUEUE_DELAY_MS);
+    }
+  }
+}
+
+async function queueAllOpenTabs({ prioritizeActive = false } = {}) {
+  if (!previewEnabled) {
+    return;
+  }
+
+  let tabs;
+  try {
+    tabs = await chrome.tabs.query({});
+  } catch (error) {
+    console.error('Failed to query tabs for preview queue:', error);
+    return;
+  }
+
+  const activeTabIds = new Set();
+
+  for (const tab of tabs) {
+    if (typeof tab?.id !== 'number') {
+      continue;
+    }
+
+    if (shouldSkipPreviewForUrl(tab.url)) {
+      await removePreview(tab.id);
+      continue;
+    }
+
+    const priority = prioritizeActive && Boolean(tab.active);
+    if (priority) {
+      activeTabIds.add(tab.id);
+    }
+
+    enqueuePreview(tab.id, { priority });
+  }
+
+  if (!prioritizeActive || activeTabIds.size === 0) {
+    return;
+  }
+
+  for (const tabId of activeTabIds) {
+    moveTabToQueueFront(tabId);
+  }
+}
+
+function syncPreviewOrder(tabIds) {
+  if (!previewEnabled || !Array.isArray(tabIds)) {
+    return;
+  }
+
+  const normalised = tabIds.filter((id) => typeof id === 'number');
+  if (normalised.length === 0) {
+    return;
+  }
+
+  const existingQueue = previewQueue.slice();
+  previewQueue = [];
+  previewQueueSet.clear();
+
+  for (const tabId of normalised) {
+    if (previewData.has(tabId)) {
+      continue;
+    }
+    if (!previewQueueSet.has(tabId)) {
+      previewQueue.push(tabId);
+      previewQueueSet.add(tabId);
+    }
+  }
+
+  for (const tabId of existingQueue) {
+    if (!previewQueueSet.has(tabId)) {
+      previewQueue.push(tabId);
+      previewQueueSet.add(tabId);
+    }
+  }
+
+  processPreviewQueue().catch((error) => {
+    console.error('Failed to process preview queue after sync:', error);
+  });
+}
+
+async function setPreviewEnabled(enabled) {
+  await ensurePreviewStateReady();
+  const nextValue = Boolean(enabled);
+  if (previewEnabled === nextValue) {
+    return;
+  }
+  previewEnabled = nextValue;
+  await persistPreviewEnabled();
+  if (!previewEnabled) {
+    previewQueue = [];
+    previewQueueSet.clear();
+    previewProcessing = false;
+    previewRetryTimeouts.forEach((timeout) => clearTimeout(timeout));
+    previewRetryTimeouts.clear();
+    const removedTabIds = Array.from(previewData.keys());
+    previewData.clear();
+    await persistPreviewData();
+    removedTabIds.forEach((tabId) => {
+      notifyPreviewRemoved(tabId);
+    });
+    return;
+  } else {
+    queueAllOpenTabs({ prioritizeActive: true }).catch((error) => {
+      console.error('Failed to enqueue previews after enabling:', error);
+    });
+    processPreviewQueue().catch((error) => {
+      console.error('Failed to start preview queue after enabling:', error);
+    });
+  }
+}
+
 async function sendPanelCommand(tabId, type) {
   if (typeof tabId !== 'number') {
     return false;
@@ -123,7 +578,11 @@ async function openPanelOnTab(tabId) {
 }
 
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-  await ensurePanelStateReady();
+  await Promise.all([ensurePanelStateReady(), ensurePreviewStateReady()]);
+
+  if (previewEnabled) {
+    enqueuePreview(tabId, { priority: true });
+  }
 
   if (!panelState.isOpen) {
     return;
@@ -136,10 +595,28 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
-  await ensurePanelStateReady();
+  await Promise.all([ensurePanelStateReady(), ensurePreviewStateReady()]);
 
   if (panelState.tabId === tabId) {
     updatePanelState({ tabId: null });
+  }
+
+  await removePreview(tabId);
+});
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  await ensurePreviewStateReady();
+
+  if (!previewEnabled) {
+    return;
+  }
+
+  if (changeInfo.url) {
+    await removePreview(tabId);
+  }
+
+  if (changeInfo.status === 'complete' || changeInfo.url) {
+    enqueuePreview(tabId, { priority: Boolean(changeInfo.url) });
   }
 });
 
@@ -178,6 +655,61 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((error) => {
         console.error('Failed to synchronise panel state after user close:', error);
       });
+    return;
+  }
+
+  if (message.type === PREVIEW_SET_ENABLED_MESSAGE) {
+    ensurePreviewStateReady()
+      .then(() => setPreviewEnabled(Boolean(message.enabled)))
+      .then(() => {
+        sendResponse({ ok: true });
+      })
+      .catch((error) => {
+        console.error('Failed to update preview preference:', error);
+        sendResponse({ ok: false, error: String(error?.message || error) });
+      });
+    return true;
+  }
+
+  if (message.type === PREVIEW_REQUEST_MESSAGE) {
+    (async () => {
+      await ensurePreviewStateReady();
+
+      const tabId = typeof message.tabId === 'number' ? message.tabId : null;
+      if (!previewEnabled || tabId == null) {
+        sendResponse({ status: 'queued' });
+        return;
+      }
+
+      const preview = previewData.get(tabId);
+      if (preview && typeof preview.image === 'string') {
+        sendResponse({ status: 'ready', preview });
+        enqueuePreview(tabId, { priority: Boolean(message.priority) });
+        return;
+      }
+
+      enqueuePreview(tabId, { priority: Boolean(message.priority) });
+      sendResponse({ status: 'queued' });
+    })().catch((error) => {
+      console.error('Failed to handle preview request:', error);
+      sendResponse({ status: 'queued' });
+    });
+    return true;
+  }
+
+  if (message.type === PREVIEW_SYNC_MESSAGE) {
+    ensurePreviewStateReady()
+      .then(() => {
+        if (!previewEnabled) {
+          return;
+        }
+        const tabIds = Array.isArray(message.tabIds) ? message.tabIds : [];
+        syncPreviewOrder(tabIds);
+      })
+      .catch((error) => {
+        console.error('Failed to sync preview order:', error);
+      });
+    return;
   }
 });
 
