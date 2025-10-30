@@ -6,49 +6,61 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header>
-    <div class="header-left">
-      <h2>Tab Manager</h2>
-      <button
-        id="property-btn"
-        type="button"
-        title="設定"
-        aria-expanded="false"
-        aria-controls="options-view"
-      >⚙</button>
-    </div>
-    <button id="close-btn">&gt;</button>
-  </header>
-  <div id="panel-content">
-    <section id="tab-view" class="panel-view" aria-labelledby="tab-view-heading">
-      <h3 id="tab-view-heading" class="visually-hidden">タブ一覧</h3>
-      <ul id="tab-list"></ul>
-    </section>
-    <section
-      id="options-view"
-      class="panel-view"
-      aria-labelledby="options-heading"
-      hidden
-    >
-      <div class="options-header">
-        <h3 id="options-heading">設定</h3>
+  <button
+    id="collapse-handle-btn"
+    type="button"
+    class="collapse-handle"
+    title="パネルを閉じる"
+    aria-label="パネルを閉じる"
+  >
+    <span class="collapse-handle__icon" aria-hidden="true">&gt;</span>
+    <span class="visually-hidden">パネルを閉じる</span>
+  </button>
+  <div class="panel-shell">
+    <header>
+      <div class="header-left">
+        <h2>Tab Manager</h2>
+        <button
+          id="property-btn"
+          type="button"
+          title="設定"
+          aria-expanded="false"
+          aria-controls="options-view"
+        >⚙</button>
       </div>
-      <div class="options-body">
-        <label class="option-row">
-          <input type="checkbox" id="preview-toggle">
-          <span>プレビューを有効にする</span>
-        </label>
-        <p class="option-description">
-          プレビューを無効にしてもキャッシュは保持されます。必要に応じて下のボタンから削除できます。
-        </p>
-        <div class="option-row option-row--button-row">
-          <button type="button" id="preview-cache-clear-btn" class="option-button">
-            プレビューキャッシュ画像を削除
-          </button>
-          <span id="preview-cache-size" class="option-meta" aria-live="polite">0 B</span>
+      <button id="close-btn">&gt;</button>
+    </header>
+    <div id="panel-content">
+      <section id="tab-view" class="panel-view" aria-labelledby="tab-view-heading">
+        <h3 id="tab-view-heading" class="visually-hidden">タブ一覧</h3>
+        <ul id="tab-list"></ul>
+      </section>
+      <section
+        id="options-view"
+        class="panel-view"
+        aria-labelledby="options-heading"
+        hidden
+      >
+        <div class="options-header">
+          <h3 id="options-heading">設定</h3>
         </div>
-      </div>
-    </section>
+        <div class="options-body">
+          <label class="option-row">
+            <input type="checkbox" id="preview-toggle">
+            <span>プレビューを有効にする</span>
+          </label>
+          <p class="option-description">
+            プレビューを無効にしてもキャッシュは保持されます。必要に応じて下のボタンから削除できます。
+          </p>
+          <div class="option-row option-row--button-row">
+            <button type="button" id="preview-cache-clear-btn" class="option-button">
+              プレビューキャッシュ画像を削除
+            </button>
+            <span id="preview-cache-size" class="option-meta" aria-live="polite">0 B</span>
+          </div>
+        </div>
+      </section>
+    </div>
   </div>
   <script src="panel.js"></script>
 </body>
