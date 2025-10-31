@@ -718,14 +718,9 @@ async function refreshTabs() {
 
 function attachEventListeners() {
   const closeButton = document.getElementById('close-btn');
-  const collapseHandleButton = document.getElementById('collapse-handle-btn');
 
   if (closeButton) {
     closeButton.addEventListener('click', notifyPanelClosed);
-  }
-
-  if (collapseHandleButton) {
-    collapseHandleButton.addEventListener('click', notifyPanelClosed);
   }
 
   chrome.tabs.onActivated.addListener(refreshTabs);
