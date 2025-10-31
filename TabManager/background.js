@@ -18,6 +18,21 @@ const PREVIEW_REMOVAL_REASON_UNSUPPORTED = 'unsupported';
 const PREVIEW_REMOVAL_REASON_CLOSED = 'closed';
 const PREVIEW_REMOVAL_REASON_REFRESHED = 'refreshed';
 const PREVIEW_REMOVAL_REASON_CLEARED = 'cleared';
+const GROUP_TABS_BY_DOMAIN_MESSAGE = 'TabManagerGroupTabsByDomain';
+const GROUP_SCOPE_CURRENT_WINDOW = 'current-window';
+const GROUP_SCOPE_ALL_WINDOWS = 'all-windows';
+const TAB_GROUP_COLOR_SEQUENCE = [
+  'grey',
+  'blue',
+  'red',
+  'yellow',
+  'green',
+  'pink',
+  'purple',
+  'cyan',
+  'orange',
+];
+const FALLBACK_OTHER_GROUP_TITLE = 'その他';
 
 const panelStorageArea = chrome.storage.session ?? chrome.storage.local;
 
@@ -183,6 +198,165 @@ async function persistPreviewData() {
     });
   } catch (error) {
     console.error('Failed to persist preview data:', error);
+  }
+}
+
+function extractDomainFromUrl(url) {
+  if (typeof url !== 'string' || url.length === 0) {
+    return null;
+  }
+
+  try {
+    const { hostname } = new URL(url);
+    if (!hostname) {
+      return null;
+    }
+    return hostname.toLowerCase();
+  } catch (error) {
+    return null;
+  }
+}
+
+async function resolveCurrentWindowIdForGrouping() {
+  try {
+    const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (activeTab && Number.isFinite(activeTab.windowId)) {
+      return activeTab.windowId;
+    }
+  } catch (error) {
+    console.error('Failed to query active tab for grouping:', error);
+  }
+
+  try {
+    const window = await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
+    if (window && Number.isFinite(window.id)) {
+      return window.id;
+    }
+  } catch (error) {
+    console.error('Failed to determine last focused window for grouping:', error);
+  }
+
+  return null;
+}
+
+async function collectTabsByWindowForScope(scope) {
+  if (scope === GROUP_SCOPE_ALL_WINDOWS) {
+    const tabs = await chrome.tabs.query({ windowType: 'normal' });
+    const result = new Map();
+    for (const tab of tabs) {
+      if (!tab || !Number.isFinite(tab.windowId)) {
+        continue;
+      }
+      const collection = result.get(tab.windowId) ?? [];
+      collection.push(tab);
+      result.set(tab.windowId, collection);
+    }
+    return result;
+  }
+
+  const windowId = await resolveCurrentWindowIdForGrouping();
+  if (!Number.isFinite(windowId)) {
+    return new Map();
+  }
+
+  const tabs = await chrome.tabs.query({ windowId, windowType: 'normal' });
+  return new Map([[windowId, tabs]]);
+}
+
+function normaliseTabIds(tabIds) {
+  const unique = new Set();
+  for (const id of tabIds) {
+    if (Number.isFinite(id)) {
+      unique.add(id);
+    }
+  }
+  return Array.from(unique);
+}
+
+async function groupTabIds(tabIds, { title, color }) {
+  const normalised = normaliseTabIds(tabIds);
+  if (normalised.length === 0) {
+    return null;
+  }
+
+  try {
+    const groupId = await chrome.tabs.group({ tabIds: normalised });
+    const updateProperties = {};
+    if (typeof title === 'string' && title.trim().length > 0) {
+      updateProperties.title = title.trim();
+    }
+    if (typeof color === 'string' && TAB_GROUP_COLOR_SEQUENCE.includes(color)) {
+      updateProperties.color = color;
+    }
+    if (Object.keys(updateProperties).length > 0) {
+      await chrome.tabGroups.update(groupId, updateProperties);
+    }
+    return groupId;
+  } catch (error) {
+    console.error('Failed to group tabs:', error);
+    return null;
+  }
+}
+
+async function groupTabsByDomain(scope) {
+  const tabsByWindow = await collectTabsByWindowForScope(scope);
+
+  for (const [, tabs] of tabsByWindow.entries()) {
+    if (!Array.isArray(tabs) || tabs.length === 0) {
+      continue;
+    }
+
+    const domainMap = new Map();
+    const leftoverTabIds = [];
+
+    for (const tab of tabs) {
+      if (!tab || !Number.isFinite(tab.id) || tab.pinned) {
+        continue;
+      }
+
+      const domain = extractDomainFromUrl(tab.url);
+      if (!domain) {
+        leftoverTabIds.push(tab.id);
+        continue;
+      }
+
+      const collection = domainMap.get(domain);
+      if (collection) {
+        collection.push(tab.id);
+      } else {
+        domainMap.set(domain, [tab.id]);
+      }
+    }
+
+    const domainGroups = [];
+    for (const [domain, tabIds] of domainMap.entries()) {
+      if (tabIds.length > 1) {
+        domainGroups.push({ domain, tabIds });
+      } else if (tabIds.length === 1) {
+        leftoverTabIds.push(tabIds[0]);
+      }
+    }
+
+    if (domainGroups.length === 0) {
+      continue;
+    }
+
+    domainGroups.sort((a, b) => a.domain.localeCompare(b.domain));
+
+    let colorIndex = 0;
+    for (const entry of domainGroups) {
+      const color = TAB_GROUP_COLOR_SEQUENCE[colorIndex % TAB_GROUP_COLOR_SEQUENCE.length];
+      colorIndex += 1;
+      await groupTabIds(entry.tabIds, { title: entry.domain, color });
+    }
+
+    if (leftoverTabIds.length > 0) {
+      const color = TAB_GROUP_COLOR_SEQUENCE[colorIndex % TAB_GROUP_COLOR_SEQUENCE.length];
+      await groupTabIds(leftoverTabIds, {
+        title: FALLBACK_OTHER_GROUP_TITLE,
+        color,
+      });
+    }
   }
 }
 
@@ -938,6 +1112,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.error('Failed to sync preview order:', error);
       });
     return;
+  }
+
+  if (message.type === GROUP_TABS_BY_DOMAIN_MESSAGE) {
+    const scope =
+      message.scope === GROUP_SCOPE_ALL_WINDOWS
+        ? GROUP_SCOPE_ALL_WINDOWS
+        : GROUP_SCOPE_CURRENT_WINDOW;
+
+    (async () => {
+      try {
+        await groupTabsByDomain(scope);
+        sendResponse({ ok: true });
+      } catch (error) {
+        console.error('Failed to group tabs by domain:', error);
+        sendResponse({ ok: false, error: String(error?.message || error) });
+      }
+    })();
+
+    return true;
   }
 });
 
