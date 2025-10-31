@@ -76,6 +76,10 @@ header.is-compact {
   position: relative;
 }
 
+#ext-title {
+  font-family: system-ui;
+}
+
 #close-btn,
 #close-btn:focus {
   outline: none;
