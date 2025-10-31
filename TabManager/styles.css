@@ -437,6 +437,46 @@ header.is-compact {
   border-top: 1px solid var(--tm-divider);
 }
 
+.context-menu {
+  position: fixed;
+  background-color: var(--tm-header-bg);
+  border: 1px solid var(--tm-border);
+  border-radius: 8px;
+  padding: 6px 0;
+  min-width: 180px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+}
+
+.context-menu[hidden] {
+  display: none;
+}
+
+.context-menu__item {
+  background: none;
+  border: none;
+  color: var(--tm-text-primary);
+  font: inherit;
+  text-align: left;
+  padding: 8px 16px;
+  cursor: pointer;
+  width: 100%;
+  transition: background-color 0.15s ease;
+}
+
+.context-menu__item:hover,
+.context-menu__item:focus-visible {
+  outline: none;
+  background-color: var(--tm-hover-bg);
+}
+
+.context-menu__item:disabled {
+  color: var(--tm-text-muted);
+  cursor: not-allowed;
+}
+
 .tab-favicon {
   width: 18px;
   height: 18px;
