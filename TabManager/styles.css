@@ -70,6 +70,7 @@ header.is-compact {
 
 .header-left {
   display: flex;
+  margin-left: 12px;
   align-items: center;
   gap: 8px;
   position: relative;
