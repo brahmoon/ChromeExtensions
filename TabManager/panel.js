@@ -10,11 +10,6 @@ const PREVIEW_OVERLAY_VISIBILITY_MESSAGE = 'TabManagerPreviewOverlayVisibility';
 const PREVIEW_CLEAR_CACHE_MESSAGE = 'TabManagerClearPreviewCache';
 const PREVIEW_TOGGLE_ID = 'preview-toggle';
 const PROPERTY_BUTTON_ID = 'property-btn';
-const GROUP_DOMAIN_BUTTON_ID = 'group-domain-btn';
-const GROUP_DOMAIN_MENU_ID = 'group-domain-menu';
-const GROUP_TABS_BY_DOMAIN_MESSAGE = 'TabManagerGroupTabsByDomain';
-const GROUP_SCOPE_CURRENT_WINDOW = 'current-window';
-const GROUP_SCOPE_ALL_WINDOWS = 'all-windows';
 const TAB_VIEW_ID = 'tab-view';
 const OPTIONS_VIEW_ID = 'options-view';
 const PREVIEW_CACHE_CLEAR_BUTTON_ID = 'preview-cache-clear-btn';
@@ -122,7 +117,6 @@ let activePreviewTabId = null;
 let previewRenderTimeout = null;
 let optionsViewOpen = false;
 let currentThemeId = DEFAULT_THEME_ID;
-let domainGroupMenuOpen = false;
 
 function notifyPanelClosed() {
   window.parent.postMessage({ type: 'TabManagerClosePanel' }, '*');
@@ -728,145 +722,8 @@ function setPropertyButtonExpanded(expanded) {
   button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
 }
 
-function getDomainGroupButton() {
-  return document.getElementById(GROUP_DOMAIN_BUTTON_ID);
-}
-
-function getDomainGroupMenu() {
-  return document.getElementById(GROUP_DOMAIN_MENU_ID);
-}
-
-function updateDomainGroupMenuUI() {
-  const button = getDomainGroupButton();
-  if (button) {
-    button.setAttribute('aria-expanded', domainGroupMenuOpen ? 'true' : 'false');
-  }
-
-  const menu = getDomainGroupMenu();
-  if (menu) {
-    menu.hidden = !domainGroupMenuOpen;
-  }
-}
-
-function setDomainGroupMenuOpen(open) {
-  const nextState = Boolean(open);
-  if (domainGroupMenuOpen === nextState) {
-    updateDomainGroupMenuUI();
-    return;
-  }
-
-  domainGroupMenuOpen = nextState;
-  updateDomainGroupMenuUI();
-
-  if (domainGroupMenuOpen) {
-    document.addEventListener('pointerdown', handleDomainMenuOutsideInteraction, true);
-    document.addEventListener('focusin', handleDomainMenuOutsideInteraction, true);
-  } else {
-    document.removeEventListener('pointerdown', handleDomainMenuOutsideInteraction, true);
-    document.removeEventListener('focusin', handleDomainMenuOutsideInteraction, true);
-  }
-}
-
-function openDomainGroupMenu({ focusFirstItem = false } = {}) {
-  if (domainGroupMenuOpen) {
-    return;
-  }
-
-  setDomainGroupMenuOpen(true);
-
-  if (focusFirstItem) {
-    requestAnimationFrame(() => {
-      focusFirstDomainMenuItem();
-    });
-  }
-}
-
-function closeDomainGroupMenu() {
-  if (!domainGroupMenuOpen) {
-    return;
-  }
-  setDomainGroupMenuOpen(false);
-}
-
-function toggleDomainGroupMenu() {
-  if (domainGroupMenuOpen) {
-    closeDomainGroupMenu();
-  } else {
-    openDomainGroupMenu();
-  }
-}
-
-function handleDomainMenuOutsideInteraction(event) {
-  const button = getDomainGroupButton();
-  const menu = getDomainGroupMenu();
-  if (!button || !menu) {
-    return;
-  }
-
-  if (button.contains(event.target) || menu.contains(event.target)) {
-    return;
-  }
-
-  closeDomainGroupMenu();
-}
-
-function focusFirstDomainMenuItem() {
-  const menu = getDomainGroupMenu();
-  if (!menu) {
-    return;
-  }
-
-  const firstItem = menu.querySelector('.group-menu__item');
-  if (firstItem) {
-    firstItem.focus();
-  }
-}
-
-async function requestDomainGrouping(scope) {
-  const targetScope =
-    scope === GROUP_SCOPE_ALL_WINDOWS ? GROUP_SCOPE_ALL_WINDOWS : GROUP_SCOPE_CURRENT_WINDOW;
-  try {
-    const response = await chrome.runtime.sendMessage({
-      type: GROUP_TABS_BY_DOMAIN_MESSAGE,
-      scope: targetScope,
-    });
-    if (response && response.ok === false) {
-      throw new Error(response.error || 'Grouping failed');
-    }
-  } catch (error) {
-    console.error('Failed to group tabs by domain:', error);
-  }
-}
-
-function handleDomainMenuClick(event) {
-  const item = event.target.closest('.group-menu__item[data-scope]');
-  if (!item) {
-    return;
-  }
-
-  event.preventDefault();
-  const scope = item.dataset.scope;
-  closeDomainGroupMenu();
-  requestDomainGrouping(scope);
-}
-
 function handleKeydown(event) {
-  if (event.key !== 'Escape') {
-    return;
-  }
-
-  if (domainGroupMenuOpen) {
-    event.preventDefault();
-    event.stopPropagation();
-    closeDomainGroupMenu();
-    const button = getDomainGroupButton();
-    if (button) {
-      button.focus();
-    }
-    return;
-  }
-
-  if (optionsViewOpen) {
+  if (event.key === 'Escape' && optionsViewOpen) {
     toggleOptionsView(false);
   }
 }
@@ -901,7 +758,6 @@ function toggleOptionsView(forceState) {
   if (nextState === optionsViewOpen) {
     return;
   }
-  closeDomainGroupMenu();
   optionsViewOpen = nextState;
   applyOptionsViewState();
 }
@@ -942,7 +798,6 @@ function setupOptionsControls() {
     button.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      closeDomainGroupMenu();
       toggleOptionsView();
     });
   }
@@ -1066,31 +921,6 @@ function attachEventListeners() {
 
   if (closeButton) {
     closeButton.addEventListener('click', notifyPanelClosed);
-  }
-
-  const groupButton = getDomainGroupButton();
-  const groupMenu = getDomainGroupMenu();
-  if (groupButton && groupMenu) {
-    groupButton.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      toggleDomainGroupMenu();
-    });
-
-    groupButton.addEventListener('keydown', (event) => {
-      if (
-        event.key === 'ArrowDown' ||
-        event.key === 'Enter' ||
-        event.key === ' ' ||
-        event.key === 'Space' ||
-        event.key === 'Spacebar'
-      ) {
-        event.preventDefault();
-        openDomainGroupMenu({ focusFirstItem: true });
-      }
-    });
-
-    groupMenu.addEventListener('click', handleDomainMenuClick);
   }
 
   chrome.tabs.onActivated.addListener(refreshTabs);
