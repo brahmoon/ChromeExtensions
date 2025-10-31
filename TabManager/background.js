@@ -13,6 +13,9 @@ const PREVIEW_RETRY_DELAY_MS = 4000;
 const PREVIEW_POST_LOAD_CAPTURE_DELAY_MS = 350;
 const PREVIEW_MAX_CACHE_ENTRIES = 40;
 const PREVIEW_PROTOCOL_DENYLIST = [/^chrome:/i, /^edge:/i, /^about:/i, /^view-source:/i, /^devtools:/i];
+const GROUP_TABS_BY_DOMAIN_MESSAGE = 'TabManagerGroupTabsByDomain';
+const GROUP_SCOPE_CURRENT = 'current';
+const GROUP_SCOPE_ALL = 'all';
 const EXTENSION_ELEMENT_ATTRIBUTE = 'data-tab-manager-element';
 const PREVIEW_REMOVAL_REASON_UNSUPPORTED = 'unsupported';
 const PREVIEW_REMOVAL_REASON_CLOSED = 'closed';
@@ -831,6 +834,168 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   }
 });
 
+function extractDomainForGrouping(url) {
+  if (typeof url !== 'string' || url.length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(url);
+    const protocol = (parsed.protocol || '').toLowerCase();
+
+    if (!parsed.hostname) {
+      return null;
+    }
+
+    if (
+      protocol.startsWith('chrome') ||
+      protocol.startsWith('edge') ||
+      protocol.startsWith('about') ||
+      protocol.startsWith('view-source') ||
+      protocol.startsWith('devtools') ||
+      protocol.startsWith('chrome-extension') ||
+      protocol.startsWith('moz-extension') ||
+      protocol.startsWith('file') ||
+      protocol.startsWith('data')
+    ) {
+      return null;
+    }
+
+    return parsed.hostname.toLowerCase();
+  } catch (error) {
+    return null;
+  }
+}
+
+async function resolveWindowIdForGrouping(explicitWindowId, sender) {
+  if (Number.isFinite(explicitWindowId)) {
+    return explicitWindowId;
+  }
+
+  if (sender?.tab && Number.isFinite(sender.tab.windowId)) {
+    return sender.tab.windowId;
+  }
+
+  try {
+    await ensurePanelStateReady();
+  } catch (error) {
+    console.error('Failed to ensure panel state while resolving window:', error);
+  }
+
+  if (Number.isFinite(panelState?.tabId)) {
+    try {
+      const hostTab = await chrome.tabs.get(panelState.tabId);
+      if (hostTab && Number.isFinite(hostTab.windowId)) {
+        return hostTab.windowId;
+      }
+    } catch (error) {
+      console.debug('Failed to resolve panel host window:', error);
+    }
+  }
+
+  try {
+    const [activeTab] = await chrome.tabs.query({
+      active: true,
+      lastFocusedWindow: true,
+    });
+    if (activeTab && Number.isFinite(activeTab.windowId)) {
+      return activeTab.windowId;
+    }
+  } catch (error) {
+    console.debug('Failed to resolve last focused window for grouping:', error);
+  }
+
+  return null;
+}
+
+async function createTabGroup(tabEntries) {
+  if (!Array.isArray(tabEntries) || tabEntries.length === 0) {
+    return null;
+  }
+
+  const tabIds = [];
+  for (const tab of tabEntries) {
+    if (tab && Number.isFinite(tab.id)) {
+      tabIds.push(tab.id);
+    }
+  }
+
+  if (tabIds.length === 0) {
+    return null;
+  }
+
+  try {
+    const groupId = await chrome.tabs.group({ tabIds });
+    try {
+      await chrome.tabGroups.update(groupId, { title: '' });
+    } catch (updateError) {
+      console.debug('Failed to clear tab group title:', updateError);
+    }
+    return groupId;
+  } catch (error) {
+    console.error('Failed to create tab group:', error);
+    return null;
+  }
+}
+
+async function groupTabsByDomain({ scope, windowId }) {
+  const query = {};
+  if (scope === GROUP_SCOPE_CURRENT && Number.isFinite(windowId)) {
+    query.windowId = windowId;
+  }
+
+  const tabs = await chrome.tabs.query(query);
+  if (!Array.isArray(tabs) || tabs.length === 0) {
+    return;
+  }
+
+  const perWindow = new Map();
+
+  for (const tab of tabs) {
+    if (!tab || !Number.isFinite(tab.id) || !Number.isFinite(tab.windowId)) {
+      continue;
+    }
+
+    if (tab.pinned) {
+      continue;
+    }
+
+    let entry = perWindow.get(tab.windowId);
+    if (!entry) {
+      entry = { domains: new Map(), leftovers: [] };
+      perWindow.set(tab.windowId, entry);
+    }
+
+    const domain = extractDomainForGrouping(tab.url);
+    if (domain) {
+      const domainTabs = entry.domains.get(domain);
+      if (domainTabs) {
+        domainTabs.push(tab);
+      } else {
+        entry.domains.set(domain, [tab]);
+      }
+    } else {
+      entry.leftovers.push(tab);
+    }
+  }
+
+  for (const entry of perWindow.values()) {
+    const leftovers = entry.leftovers;
+
+    for (const [domain, domainTabs] of entry.domains.entries()) {
+      if (domainTabs.length > 1) {
+        await createTabGroup(domainTabs);
+      } else if (domainTabs.length === 1) {
+        leftovers.push(domainTabs[0]);
+      }
+    }
+
+    if (leftovers.length > 0) {
+      await createTabGroup(leftovers);
+    }
+  }
+}
+
 chrome.action.onClicked.addListener(async (tab) => {
   const tabId = tab.id;
   if (typeof tabId !== 'number') {
@@ -867,6 +1032,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.error('Failed to synchronise panel state after user close:', error);
       });
     return;
+  }
+
+  if (message.type === GROUP_TABS_BY_DOMAIN_MESSAGE) {
+    (async () => {
+      const scope =
+        message.scope === GROUP_SCOPE_CURRENT
+          ? GROUP_SCOPE_CURRENT
+          : GROUP_SCOPE_ALL;
+
+      let targetWindowId = null;
+      if (scope === GROUP_SCOPE_CURRENT) {
+        const explicitWindowId = Number.isFinite(message.windowId)
+          ? message.windowId
+          : null;
+        targetWindowId = await resolveWindowIdForGrouping(explicitWindowId, sender);
+        if (!Number.isFinite(targetWindowId)) {
+          throw new Error('対象のウィンドウを特定できませんでした');
+        }
+      }
+
+      await groupTabsByDomain({ scope, windowId: targetWindowId });
+      sendResponse({ ok: true });
+    })().catch((error) => {
+      console.error('Failed to group tabs by domain:', error);
+      sendResponse({ ok: false, error: String(error?.message || error) });
+    });
+    return true;
   }
 
   if (message.type === PREVIEW_SET_ENABLED_MESSAGE) {
