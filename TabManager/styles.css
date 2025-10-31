@@ -1,7 +1,7 @@
 body {
-  --collapse-handle-diameter: 72px;
+  --collapse-handle-diameter: 85px;
   --collapse-handle-radius: calc(var(--collapse-handle-diameter) / 2);
-  --collapse-handle-gap: 2px;
+  --collapse-handle-gap: 0px;
   --collapse-handle-offset: calc(var(--collapse-handle-radius) + var(--collapse-handle-gap));
 
   margin: 0;
@@ -38,19 +38,20 @@ header {
   margin-left: var(--collapse-handle-offset);
   min-width: 0;
   background-color: #202124;
+  z-index: 99;
 }
 
 .collapse-handle {
   position: fixed;
   top: 50%;
-  left: 0;
+  left: 10px;
   transform: translateY(-50%);
   width: var(--collapse-handle-radius);
   height: var(--collapse-handle-diameter);
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding: 0 10px 0 0;
+  padding: 0 16px 0 0;
   color: #eee;
   background: none;
   border: none;
