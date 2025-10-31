@@ -8,8 +8,14 @@ const PREVIEW_REMOVED_MESSAGE = 'TabManagerPreviewRemoved';
 const PREVIEW_OVERLAY_UPDATE_MESSAGE = 'TabManagerPreviewOverlayUpdate';
 const PREVIEW_OVERLAY_VISIBILITY_MESSAGE = 'TabManagerPreviewOverlayVisibility';
 const PREVIEW_CLEAR_CACHE_MESSAGE = 'TabManagerClearPreviewCache';
+const GROUP_TABS_BY_DOMAIN_MESSAGE = 'TabManagerGroupTabsByDomain';
 const PREVIEW_TOGGLE_ID = 'preview-toggle';
 const PROPERTY_BUTTON_ID = 'property-btn';
+const DOMAIN_GROUP_BUTTON_ID = 'domain-group-btn';
+const DOMAIN_GROUP_MENU_ID = 'domain-group-menu';
+const DOMAIN_GROUP_CONTAINER_ID = 'domain-group-container';
+const DOMAIN_GROUP_SCOPE_CURRENT = 'current';
+const DOMAIN_GROUP_SCOPE_ALL = 'all';
 const TAB_VIEW_ID = 'tab-view';
 const OPTIONS_VIEW_ID = 'options-view';
 const PREVIEW_CACHE_CLEAR_BUTTON_ID = 'preview-cache-clear-btn';
@@ -17,6 +23,8 @@ const PREVIEW_CACHE_SIZE_ID = 'preview-cache-size';
 const THEME_STORAGE_KEY = 'tabManagerTheme';
 const THEME_SELECT_ID = 'theme-select';
 const DEFAULT_THEME_ID = 'slate';
+const GROUP_LABELS_STORAGE_KEY = 'tabManagerGroupLabels';
+const SCROLL_POSITION_STORAGE_KEY = 'tabManagerScrollPosition';
 const PREVIEW_DEFAULT_MESSAGE = 'タブをホバーしてプレビューを表示';
 const PREVIEW_DISABLED_MESSAGE = '設定画面からプレビューを有効にしてください';
 const PREVIEW_UNAVAILABLE_MESSAGE = 'このタブのプレビュー画像は利用できません';
@@ -116,7 +124,16 @@ const previewUnavailableTabs = new Set();
 let activePreviewTabId = null;
 let previewRenderTimeout = null;
 let optionsViewOpen = false;
+let domainGroupingMenuOpen = false;
 let currentThemeId = DEFAULT_THEME_ID;
+let groupLabels = loadGroupLabelsFromStorage();
+let storedScrollPosition = loadScrollPositionFromStorage();
+let hasRestoredScrollPosition = false;
+let pendingScrollSaveFrameId = null;
+
+function getTabListElement() {
+  return document.getElementById('tab-list');
+}
 
 function notifyPanelClosed() {
   window.parent.postMessage({ type: 'TabManagerClosePanel' }, '*');
@@ -135,6 +152,254 @@ function postToParentMessage(type, detail = {}) {
       // ignore messaging failures
     }
   }
+}
+
+function loadGroupLabelsFromStorage() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return {};
+  }
+
+  try {
+    const stored = window.localStorage.getItem(GROUP_LABELS_STORAGE_KEY);
+    if (!stored) {
+      return {};
+    }
+    const parsed = JSON.parse(stored);
+    if (!parsed || typeof parsed !== 'object') {
+      return {};
+    }
+    const result = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === 'string') {
+        result[key] = value;
+      }
+    }
+    return result;
+  } catch (error) {
+    console.error('Failed to load stored group labels:', error);
+    return {};
+  }
+}
+
+function persistGroupLabelsToStorage() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      GROUP_LABELS_STORAGE_KEY,
+      JSON.stringify(groupLabels ?? {})
+    );
+  } catch (error) {
+    console.error('Failed to persist group labels:', error);
+  }
+}
+
+function getStoredGroupLabel(groupId) {
+  if (!groupLabels || typeof groupLabels !== 'object') {
+    return null;
+  }
+  const key = String(groupId);
+  if (!Object.prototype.hasOwnProperty.call(groupLabels, key)) {
+    return null;
+  }
+  return typeof groupLabels[key] === 'string' ? groupLabels[key] : null;
+}
+
+function setStoredGroupLabel(groupId, label) {
+  const key = String(groupId);
+  if (!groupLabels || typeof groupLabels !== 'object') {
+    groupLabels = {};
+  }
+
+  groupLabels[key] = label;
+  persistGroupLabelsToStorage();
+}
+
+function removeStoredGroupLabel(groupId) {
+  if (!groupLabels || typeof groupLabels !== 'object') {
+    return;
+  }
+
+  const key = String(groupId);
+  if (Object.prototype.hasOwnProperty.call(groupLabels, key)) {
+    delete groupLabels[key];
+    persistGroupLabelsToStorage();
+  }
+}
+
+function loadScrollPositionFromStorage() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return 0;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(SCROLL_POSITION_STORAGE_KEY);
+    if (!stored) {
+      return 0;
+    }
+    const parsed = Number.parseInt(stored, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  } catch (error) {
+    console.error('Failed to load stored scroll position:', error);
+    return 0;
+  }
+}
+
+function persistScrollPositionToStorage(scrollTop) {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+
+  const normalized = Number.isFinite(scrollTop)
+    ? Math.max(0, Math.round(scrollTop))
+    : 0;
+
+  try {
+    window.localStorage.setItem(
+      SCROLL_POSITION_STORAGE_KEY,
+      String(normalized)
+    );
+    storedScrollPosition = normalized;
+  } catch (error) {
+    console.error('Failed to persist scroll position:', error);
+  }
+}
+
+function getCurrentPanelScrollPosition() {
+  const list = getTabListElement();
+  if (list && typeof list.scrollTop === 'number') {
+    return Math.max(0, list.scrollTop);
+  }
+
+  return 0;
+}
+
+function scheduleScrollPositionSave() {
+  if (pendingScrollSaveFrameId !== null) {
+    return;
+  }
+
+  pendingScrollSaveFrameId = requestAnimationFrame(() => {
+    pendingScrollSaveFrameId = null;
+    persistScrollPositionToStorage(getCurrentPanelScrollPosition());
+  });
+}
+
+function handlePanelScroll() {
+  scheduleScrollPositionSave();
+}
+
+function restoreScrollPositionFromStorage() {
+  if (hasRestoredScrollPosition) {
+    return;
+  }
+
+  const target = Number.isFinite(storedScrollPosition)
+    ? Math.max(0, storedScrollPosition)
+    : 0;
+
+  const list = getTabListElement();
+  if (!list) {
+    return;
+  }
+
+  hasRestoredScrollPosition = true;
+
+  requestAnimationFrame(() => {
+    list.scrollTo({ top: target, behavior: 'auto' });
+  });
+}
+
+function setupScrollPersistence() {
+  const list = getTabListElement();
+  if (!list) {
+    return;
+  }
+
+  list.addEventListener('scroll', handlePanelScroll, { passive: true });
+
+  window.addEventListener('beforeunload', () => {
+    if (pendingScrollSaveFrameId !== null) {
+      cancelAnimationFrame(pendingScrollSaveFrameId);
+      pendingScrollSaveFrameId = null;
+    }
+    persistScrollPositionToStorage(getCurrentPanelScrollPosition());
+  });
+}
+
+function extractDomainForGrouping(url) {
+  if (typeof url !== 'string' || url.length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(url);
+    const protocol = (parsed.protocol || '').toLowerCase();
+
+    if (!parsed.hostname) {
+      return null;
+    }
+
+    if (
+      protocol.startsWith('chrome') ||
+      protocol.startsWith('edge') ||
+      protocol.startsWith('about') ||
+      protocol.startsWith('view-source') ||
+      protocol.startsWith('devtools') ||
+      protocol.startsWith('chrome-extension') ||
+      protocol.startsWith('moz-extension') ||
+      protocol.startsWith('file') ||
+      protocol.startsWith('data')
+    ) {
+      return null;
+    }
+
+    return parsed.hostname.toLowerCase();
+  } catch (error) {
+    return null;
+  }
+}
+
+function computeDefaultGroupLabel(groupId, groupInfo, tabs) {
+  const infoTitle = (groupInfo?.title || '').trim();
+  if (infoTitle) {
+    return infoTitle;
+  }
+
+  if (Array.isArray(tabs) && tabs.length > 0) {
+    const domainCounts = new Map();
+    let hasDomainless = false;
+
+    for (const tab of tabs) {
+      const domain = extractDomainForGrouping(tab?.url);
+      if (domain) {
+        const nextCount = (domainCounts.get(domain) || 0) + 1;
+        domainCounts.set(domain, nextCount);
+      } else {
+        hasDomainless = true;
+      }
+    }
+
+    if (domainCounts.size === 1) {
+      const [onlyDomain, count] = domainCounts.entries().next().value;
+      if (count >= 2 && !hasDomainless) {
+        return onlyDomain;
+      }
+    }
+
+    return 'その他';
+  }
+
+  return `グループ ${groupId}`;
+}
+
+function resolveGroupDisplayLabel(groupId, groupInfo, tabs) {
+  const storedLabel = getStoredGroupLabel(groupId);
+  const defaultLabel = computeDefaultGroupLabel(groupId, groupInfo, tabs);
+  const displayLabel = storedLabel != null ? storedLabel : defaultLabel;
+  return { storedLabel, defaultLabel, displayLabel };
 }
 
 function createPlaceholderFavicon(tab) {
@@ -465,6 +730,118 @@ function createTabListItem(tab) {
   return li;
 }
 
+function attachGroupTitleEditing(titleElement, { item, groupId, groupInfo, tabs }) {
+  if (!titleElement) {
+    return;
+  }
+
+  titleElement.addEventListener('dblclick', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    beginGroupTitleEditing({
+      item,
+      groupId,
+      groupInfo,
+      tabs,
+      currentElement: titleElement,
+    });
+  });
+}
+
+function finalizeGroupTitleEditing({
+  item,
+  groupId,
+  groupInfo,
+  tabs,
+  input,
+  commit,
+  previousText,
+}) {
+  let nextLabel = previousText;
+
+  if (commit) {
+    const trimmed = input.value.trim();
+    if (trimmed.length > 0) {
+      setStoredGroupLabel(groupId, trimmed);
+      nextLabel = trimmed;
+    } else {
+      removeStoredGroupLabel(groupId);
+      nextLabel = computeDefaultGroupLabel(groupId, groupInfo, tabs) || '';
+    }
+  }
+
+  const defaultLabel = computeDefaultGroupLabel(groupId, groupInfo, tabs) || '';
+  item.dataset.defaultLabel = defaultLabel;
+
+  const replacement = document.createElement('span');
+  replacement.className = 'group-title';
+  replacement.textContent = nextLabel;
+  replacement.title = nextLabel;
+
+  attachGroupTitleEditing(replacement, { item, groupId, groupInfo, tabs });
+
+  input.replaceWith(replacement);
+  item.classList.remove('group-item--editing');
+}
+
+function beginGroupTitleEditing({ item, groupId, groupInfo, tabs, currentElement }) {
+  if (!item || !currentElement) {
+    return;
+  }
+
+  const currentText = currentElement.textContent || '';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'group-title-input';
+  input.value = currentText;
+  input.setAttribute('aria-label', 'グループ名を編集');
+
+  item.classList.add('group-item--editing');
+  currentElement.replaceWith(input);
+
+  let finished = false;
+  const finalize = (commit) => {
+    if (finished) {
+      return;
+    }
+    finished = true;
+    finalizeGroupTitleEditing({
+      item,
+      groupId,
+      groupInfo,
+      tabs,
+      input,
+      commit,
+      previousText: currentText,
+    });
+  };
+
+  input.addEventListener('blur', () => finalize(true));
+  input.addEventListener('keydown', (event) => {
+    event.stopPropagation();
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      finalize(true);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      finalize(false);
+    }
+  });
+
+  input.addEventListener('mousedown', (event) => {
+    event.stopPropagation();
+  });
+
+  input.addEventListener('click', (event) => {
+    event.stopPropagation();
+  });
+
+  requestAnimationFrame(() => {
+    input.focus();
+    input.select();
+  });
+}
+
 function createGroupAccordion(groupId, groupInfo, tabs) {
   if (!Array.isArray(tabs) || tabs.length === 0) {
     return null;
@@ -472,12 +849,17 @@ function createGroupAccordion(groupId, groupInfo, tabs) {
 
   const listId = `tab-group-${groupId}`;
   const expandedByDefault = groupInfo?.collapsed ? false : true;
-  const titleText = (groupInfo?.title || '').trim() || `グループ ${groupId}`;
+  const { defaultLabel, displayLabel } = resolveGroupDisplayLabel(
+    groupId,
+    groupInfo,
+    tabs
+  );
   const color = resolveGroupColor(groupInfo?.color);
 
   const item = document.createElement('li');
   item.className = 'group-item';
   item.dataset.groupId = String(groupId);
+  item.dataset.defaultLabel = defaultLabel || '';
 
   const tabList = document.createElement('ul');
   tabList.className = 'group-tab-list';
@@ -500,7 +882,9 @@ function createGroupAccordion(groupId, groupInfo, tabs) {
 
   const title = document.createElement('span');
   title.className = 'group-title';
-  title.textContent = titleText;
+  title.textContent = displayLabel;
+  title.title = displayLabel;
+  attachGroupTitleEditing(title, { item, groupId, groupInfo, tabs });
 
   const count = document.createElement('span');
   count.className = 'group-count';
@@ -722,8 +1106,211 @@ function setPropertyButtonExpanded(expanded) {
   button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
 }
 
+function getDomainGroupingButton() {
+  return document.getElementById(DOMAIN_GROUP_BUTTON_ID);
+}
+
+function getDomainGroupingMenu() {
+  return document.getElementById(DOMAIN_GROUP_MENU_ID);
+}
+
+function getDomainGroupingContainer() {
+  return document.getElementById(DOMAIN_GROUP_CONTAINER_ID);
+}
+
+function positionDomainGroupingMenu() {
+  const menu = getDomainGroupingMenu();
+  const container = getDomainGroupingContainer();
+  const panelShell = document.querySelector('.panel-shell');
+
+  if (!menu || !container || !panelShell) {
+    return;
+  }
+
+  const containerRect = container.getBoundingClientRect();
+  const panelRect = panelShell.getBoundingClientRect();
+
+  menu.style.left = '50%';
+  menu.style.right = 'auto';
+  menu.style.transform = 'translateX(-50%)';
+  menu.style.bottom = '';
+  menu.style.top = `${container.offsetHeight + 4}px`;
+
+  const menuRect = menu.getBoundingClientRect();
+
+  let correction = 0;
+  if (menuRect.left < panelRect.left) {
+    correction = panelRect.left - menuRect.left;
+  } else if (menuRect.right > panelRect.right) {
+    correction = panelRect.right - menuRect.right;
+  }
+
+  if (correction !== 0) {
+    menu.style.transform = `translateX(calc(-50% + ${correction}px))`;
+  }
+
+  if (menuRect.bottom > panelRect.bottom) {
+    const spaceAbove = containerRect.top - panelRect.top;
+    const spaceBelow = panelRect.bottom - containerRect.bottom;
+    if (spaceAbove > spaceBelow) {
+      menu.style.top = '';
+      menu.style.bottom = `${container.offsetHeight + 4}px`;
+    }
+  }
+}
+
+function setDomainGroupingMenuOpen(open, { focusButton = false } = {}) {
+  domainGroupingMenuOpen = Boolean(open);
+  const button = getDomainGroupingButton();
+  const menu = getDomainGroupingMenu();
+
+  if (button) {
+    button.setAttribute('aria-expanded', domainGroupingMenuOpen ? 'true' : 'false');
+  }
+
+  if (menu) {
+    menu.hidden = !domainGroupingMenuOpen;
+    if (domainGroupingMenuOpen) {
+      requestAnimationFrame(() => {
+        positionDomainGroupingMenu();
+        const firstItem = menu.querySelector('.header-dropdown__item');
+        if (firstItem) {
+          firstItem.focus();
+        }
+      });
+    } else if (focusButton && button) {
+      requestAnimationFrame(() => {
+        button.focus();
+      });
+    }
+  }
+}
+
+function toggleDomainGroupingMenu(forceState, options = {}) {
+  const nextState =
+    typeof forceState === 'boolean' ? forceState : !domainGroupingMenuOpen;
+  if (nextState === domainGroupingMenuOpen) {
+    if (!nextState && options.focusButton) {
+      const button = getDomainGroupingButton();
+      if (button) {
+        requestAnimationFrame(() => {
+          button.focus();
+        });
+      }
+    }
+    return;
+  }
+
+  setDomainGroupingMenuOpen(nextState, options);
+}
+
+async function handleDomainGroupingOptionSelect(scope) {
+  const normalizedScope =
+    scope === DOMAIN_GROUP_SCOPE_CURRENT
+      ? DOMAIN_GROUP_SCOPE_CURRENT
+      : scope === DOMAIN_GROUP_SCOPE_ALL
+      ? DOMAIN_GROUP_SCOPE_ALL
+      : null;
+
+  toggleDomainGroupingMenu(false, { focusButton: true });
+
+  if (!normalizedScope) {
+    return;
+  }
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: GROUP_TABS_BY_DOMAIN_MESSAGE,
+      scope: normalizedScope,
+    });
+    if (!response?.ok) {
+      throw new Error(response?.error || 'Grouping failed');
+    }
+  } catch (error) {
+    console.error('Failed to group tabs by domain:', error);
+  }
+}
+
+function setupDomainGroupingControls() {
+  const container = getDomainGroupingContainer();
+  const button = getDomainGroupingButton();
+  const menu = getDomainGroupingMenu();
+
+  if (!container || !button || !menu) {
+    return;
+  }
+
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const shouldOpen = !domainGroupingMenuOpen;
+    toggleDomainGroupingMenu(shouldOpen, { focusButton: !shouldOpen });
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!domainGroupingMenuOpen) {
+      return;
+    }
+
+    const containerElement = getDomainGroupingContainer();
+    if (!containerElement) {
+      toggleDomainGroupingMenu(false);
+      return;
+    }
+
+    const target = event.target;
+    if (!(target instanceof Node) || !containerElement.contains(target)) {
+      toggleDomainGroupingMenu(false);
+    }
+  });
+
+  menu.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    const item = target.closest('.header-dropdown__item');
+    if (!item) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const scope = item.dataset.scope;
+    handleDomainGroupingOptionSelect(scope);
+  });
+
+  menu.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && domainGroupingMenuOpen) {
+      event.preventDefault();
+      toggleDomainGroupingMenu(false, { focusButton: true });
+    }
+  });
+
+  window.addEventListener('resize', () => {
+    if (!domainGroupingMenuOpen) {
+      return;
+    }
+    requestAnimationFrame(() => {
+      positionDomainGroupingMenu();
+    });
+  });
+}
+
 function handleKeydown(event) {
-  if (event.key === 'Escape' && optionsViewOpen) {
+  if (event.key !== 'Escape') {
+    return;
+  }
+
+  if (domainGroupingMenuOpen) {
+    toggleDomainGroupingMenu(false, { focusButton: true });
+    event.stopPropagation();
+    event.preventDefault();
+    return;
+  }
+
+  if (optionsViewOpen) {
     toggleOptionsView(false);
   }
 }
@@ -798,6 +1385,9 @@ function setupOptionsControls() {
     button.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (domainGroupingMenuOpen) {
+        toggleDomainGroupingMenu(false);
+      }
       toggleOptionsView();
     });
   }
@@ -914,6 +1504,10 @@ async function refreshTabs() {
   }
 
   syncPreviewQueue(tabIdsForQueue);
+
+  if (!hasRestoredScrollPosition) {
+    restoreScrollPositionFromStorage();
+  }
 }
 
 function attachEventListeners() {
@@ -941,7 +1535,9 @@ function attachEventListeners() {
 
 document.addEventListener('DOMContentLoaded', async () => {
   await initializeTheme();
+  setupDomainGroupingControls();
   setupOptionsControls();
+  setupScrollPersistence();
   await initializePreviewState();
   attachEventListeners();
   setupHeaderBehavior();
