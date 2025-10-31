@@ -20,16 +20,11 @@ const TAB_VIEW_ID = 'tab-view';
 const OPTIONS_VIEW_ID = 'options-view';
 const PREVIEW_CACHE_CLEAR_BUTTON_ID = 'preview-cache-clear-btn';
 const PREVIEW_CACHE_SIZE_ID = 'preview-cache-size';
-const CONTEXT_MENU_ID = 'context-menu';
-const CONTEXT_MENU_ITEM_CLASS = 'context-menu__item';
-const CONTEXT_TARGET_TYPE_TAB = 'tab';
-const CONTEXT_TARGET_TYPE_GROUP = 'group';
 const THEME_STORAGE_KEY = 'tabManagerTheme';
 const THEME_SELECT_ID = 'theme-select';
 const DEFAULT_THEME_ID = 'slate';
 const GROUP_LABELS_STORAGE_KEY = 'tabManagerGroupLabels';
 const SCROLL_POSITION_STORAGE_KEY = 'tabManagerScrollPosition';
-const GROUP_EXPANSION_STORAGE_KEY = 'tabManagerGroupExpansionState';
 const PREVIEW_DEFAULT_MESSAGE = 'タブをホバーしてプレビューを表示';
 const PREVIEW_DISABLED_MESSAGE = '設定画面からプレビューを有効にしてください';
 const PREVIEW_UNAVAILABLE_MESSAGE = 'このタブのプレビュー画像は利用できません';
@@ -135,14 +130,6 @@ let groupLabels = loadGroupLabelsFromStorage();
 let storedScrollPosition = loadScrollPositionFromStorage();
 let hasRestoredScrollPosition = false;
 let pendingScrollSaveFrameId = null;
-let groupExpansionState = {};
-let groupExpansionStateReadyPromise = null;
-const tabMetadataMap = new WeakMap();
-const groupMetadataMap = new WeakMap();
-let contextMenuState = {
-  type: null,
-  targetElement: null,
-};
 
 function getTabListElement() {
   return document.getElementById('tab-list');
@@ -165,407 +152,6 @@ function postToParentMessage(type, detail = {}) {
       // ignore messaging failures
     }
   }
-}
-
-function getContextMenuElement() {
-  return document.getElementById(CONTEXT_MENU_ID);
-}
-
-function resetContextMenuState() {
-  contextMenuState = {
-    type: null,
-    targetElement: null,
-  };
-}
-
-function hideContextMenu() {
-  const menu = getContextMenuElement();
-  if (!menu) {
-    resetContextMenuState();
-    return;
-  }
-
-  if (!menu.hidden) {
-    menu.hidden = true;
-    menu.innerHTML = '';
-  }
-
-  menu.removeAttribute('data-context-type');
-  resetContextMenuState();
-}
-
-function resolveTabContext(target) {
-  if (!target) {
-    return null;
-  }
-
-  const element = target.closest('.tab-item');
-  if (!element) {
-    return null;
-  }
-
-  const metadata = tabMetadataMap.get(element);
-  if (!metadata || !metadata.tab) {
-    return null;
-  }
-
-  return { element, tab: metadata.tab };
-}
-
-function resolveGroupContext(target) {
-  if (!target) {
-    return null;
-  }
-
-  const element = target.closest('.group-item');
-  if (!element) {
-    return null;
-  }
-
-  if (element.classList.contains('group-item--editing')) {
-    return null;
-  }
-
-  const metadata = groupMetadataMap.get(element);
-  if (!metadata || typeof metadata.groupId !== 'number') {
-    return null;
-  }
-
-  return { element, ...metadata };
-}
-
-function createContextMenuButton({ label, onSelect, disabled }) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = CONTEXT_MENU_ITEM_CLASS;
-  button.textContent = label;
-  button.disabled = Boolean(disabled);
-  button.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    hideContextMenu();
-    if (typeof onSelect === 'function') {
-      onSelect();
-    }
-  });
-  return button;
-}
-
-function positionContextMenu(menu, x, y) {
-  if (!menu) {
-    return;
-  }
-
-  menu.style.left = '0px';
-  menu.style.top = '0px';
-  menu.style.visibility = 'hidden';
-  menu.hidden = false;
-
-  requestAnimationFrame(() => {
-    const { innerWidth, innerHeight } = window;
-    const rect = menu.getBoundingClientRect();
-    let left = x;
-    let top = y;
-
-    if (left + rect.width > innerWidth) {
-      left = Math.max(0, innerWidth - rect.width - 4);
-    }
-
-    if (top + rect.height > innerHeight) {
-      top = Math.max(0, innerHeight - rect.height - 4);
-    }
-
-    menu.style.left = `${left}px`;
-    menu.style.top = `${top}px`;
-    menu.style.visibility = 'visible';
-    menu.focus({ preventScroll: true });
-  });
-}
-
-function showContextMenu({ type, items, x, y, targetElement }) {
-  const menu = getContextMenuElement();
-  if (!menu || !Array.isArray(items) || items.length === 0) {
-    hideContextMenu();
-    return;
-  }
-
-  menu.innerHTML = '';
-  for (const item of items) {
-    if (!item || typeof item.label !== 'string') {
-      continue;
-    }
-    menu.appendChild(
-      createContextMenuButton({
-        label: item.label,
-        onSelect: item.onSelect,
-        disabled: item.disabled,
-      })
-    );
-  }
-
-  if (menu.children.length === 0) {
-    hideContextMenu();
-    return;
-  }
-
-  menu.dataset.contextType = type || '';
-  contextMenuState = {
-    type: type || null,
-    targetElement: targetElement || null,
-  };
-
-  positionContextMenu(menu, x, y);
-}
-
-async function copyTabLinkToClipboard(tab) {
-  if (!tab) {
-    return;
-  }
-
-  const url = typeof tab.url === 'string' && tab.url.length > 0 ? tab.url : tab.pendingUrl;
-  if (typeof url !== 'string' || url.length === 0) {
-    return;
-  }
-
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    try {
-      await navigator.clipboard.writeText(url);
-      return;
-    } catch (error) {
-      console.debug('navigator.clipboard.writeText failed:', error);
-    }
-  }
-
-  const textarea = document.createElement('textarea');
-  textarea.value = url;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.opacity = '0';
-  document.body.appendChild(textarea);
-
-  try {
-    textarea.select();
-    document.execCommand('copy');
-  } catch (error) {
-    console.error('Failed to copy link to clipboard:', error);
-  } finally {
-    textarea.remove();
-  }
-}
-
-async function closeTabFromContextMenu(tab) {
-  if (!tab || typeof tab.id !== 'number') {
-    return;
-  }
-  const rollbackScroll = preparePanelScrollForContentMutation();
-  try {
-    await chrome.tabs.remove(tab.id);
-    await refreshTabs();
-  } catch (error) {
-    rollbackScroll();
-    console.error('Failed to close tab from context menu:', error);
-  }
-}
-
-async function toggleTabMuteFromContextMenu(tab) {
-  if (!tab || typeof tab.id !== 'number') {
-    return;
-  }
-
-  const currentlyMuted = Boolean(tab?.mutedInfo?.muted);
-  const rollbackScroll = preparePanelScrollForContentMutation();
-  try {
-    await chrome.tabs.update(tab.id, { muted: !currentlyMuted });
-    await refreshTabs();
-  } catch (error) {
-    rollbackScroll();
-    console.error('Failed to toggle mute from context menu:', error);
-  }
-}
-
-function beginGroupRenameFromContextMenu(groupElement, metadata) {
-  if (!groupElement || !metadata) {
-    return;
-  }
-
-  const titleElement = groupElement.querySelector('.group-title');
-  if (!titleElement) {
-    return;
-  }
-
-  beginGroupTitleEditing({
-    item: groupElement,
-    groupId: metadata.groupId,
-    groupInfo: metadata.groupInfo,
-    tabs: metadata.tabs,
-    currentElement: titleElement,
-  });
-}
-
-async function removeGroupFromContextMenu(metadata) {
-  if (!metadata) {
-    return;
-  }
-
-  const tabIds = Array.isArray(metadata.tabs)
-    ? metadata.tabs
-        .filter((tab) => tab && typeof tab.id === 'number')
-        .map((tab) => tab.id)
-    : [];
-
-  if (tabIds.length === 0) {
-    return;
-  }
-
-  const confirmMessage =
-    tabIds.length === 1
-      ? 'このグループ内のタブを閉じます。よろしいですか？'
-      : `このグループ内の${tabIds.length}個のタブをすべて閉じます。よろしいですか？`;
-  const canConfirm = typeof window !== 'undefined' && typeof window.confirm === 'function';
-  const confirmed = canConfirm ? window.confirm(confirmMessage) : true;
-  if (!confirmed) {
-    return;
-  }
-
-  const rollbackScroll = preparePanelScrollForContentMutation();
-  try {
-    await chrome.tabs.remove(tabIds);
-    removeStoredGroupLabel(metadata.groupId);
-    removeStoredGroupExpansionState(metadata.groupId);
-    await refreshTabs();
-  } catch (error) {
-    rollbackScroll();
-    console.error('Failed to remove group from context menu:', error);
-  }
-}
-
-function showTabContextMenu(event, context) {
-  const { tab, element } = context;
-  const linkAvailable = Boolean(
-    (typeof tab?.url === 'string' && tab.url.length > 0) ||
-      (typeof tab?.pendingUrl === 'string' && tab.pendingUrl.length > 0)
-  );
-
-  const isMuted = Boolean(tab?.mutedInfo?.muted);
-
-  showContextMenu({
-    type: CONTEXT_TARGET_TYPE_TAB,
-    targetElement: element,
-    x: event.clientX,
-    y: event.clientY,
-    items: [
-      {
-        label: 'リンクをコピー',
-        onSelect: () => copyTabLinkToClipboard(tab),
-        disabled: !linkAvailable,
-      },
-      {
-        label: 'タブを閉じる',
-        onSelect: () => closeTabFromContextMenu(tab),
-      },
-      {
-        label: isMuted ? 'タブのミュートを解除' : 'タブをミュート',
-        onSelect: () => toggleTabMuteFromContextMenu(tab),
-      },
-    ],
-  });
-}
-
-function showGroupContextMenu(event, context) {
-  const { element } = context;
-
-  showContextMenu({
-    type: CONTEXT_TARGET_TYPE_GROUP,
-    targetElement: element,
-    x: event.clientX,
-    y: event.clientY,
-    items: [
-      {
-        label: 'グループ名を変更',
-        onSelect: () => beginGroupRenameFromContextMenu(element, context),
-      },
-      {
-        label: 'グループを削除',
-        onSelect: () => removeGroupFromContextMenu(context),
-      },
-    ],
-  });
-}
-
-function handlePanelContextMenu(event) {
-  const menu = getContextMenuElement();
-  if (menu && menu.contains(event.target)) {
-    event.preventDefault();
-    return;
-  }
-
-  event.preventDefault();
-  hideContextMenu();
-
-  const tabContext = resolveTabContext(event.target);
-  if (tabContext) {
-    event.stopPropagation();
-    showTabContextMenu(event, tabContext);
-    return;
-  }
-
-  const groupContext = resolveGroupContext(event.target);
-  if (groupContext) {
-    event.stopPropagation();
-    showGroupContextMenu(event, groupContext);
-  }
-}
-
-function handleContextMenuGlobalClick(event) {
-  const menu = getContextMenuElement();
-  if (!menu || menu.hidden) {
-    return;
-  }
-
-  if (menu.contains(event.target)) {
-    return;
-  }
-
-  hideContextMenu();
-}
-
-function handleContextMenuPointerDown(event) {
-  const menu = getContextMenuElement();
-  if (!menu || menu.hidden) {
-    return;
-  }
-
-  if (menu.contains(event.target)) {
-    return;
-  }
-
-  hideContextMenu();
-}
-
-function setupPanelContextMenu() {
-  const menu = getContextMenuElement();
-  if (!menu) {
-    return;
-  }
-
-  if (!menu.hasAttribute('tabindex')) {
-    menu.tabIndex = -1;
-  }
-
-  document.addEventListener('contextmenu', handlePanelContextMenu);
-  document.addEventListener('click', handleContextMenuGlobalClick);
-  document.addEventListener('pointerdown', handleContextMenuPointerDown);
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') {
-      hideContextMenu();
-    }
-  });
-  document.addEventListener('scroll', hideContextMenu, true);
-  window.addEventListener('blur', hideContextMenu);
-  window.addEventListener('resize', hideContextMenu);
-  menu.addEventListener('contextmenu', (event) => {
-    event.preventDefault();
-  });
 }
 
 function loadGroupLabelsFromStorage() {
@@ -643,226 +229,6 @@ function removeStoredGroupLabel(groupId) {
   }
 }
 
-function normalizeGroupExpansionStateValue(raw) {
-  if (!raw || typeof raw !== 'object') {
-    return {};
-  }
-
-  const normalized = {};
-  for (const [key, value] of Object.entries(raw)) {
-    const groupId = Number.parseInt(key, 10);
-    if (!Number.isFinite(groupId)) {
-      continue;
-    }
-
-    if (value === true || value === false) {
-      normalized[String(groupId)] = value;
-      continue;
-    }
-
-    if (value === 'true' || value === 'false') {
-      normalized[String(groupId)] = value === 'true';
-    }
-  }
-
-  return normalized;
-}
-
-function loadGroupExpansionStateFromLocalStorage() {
-  if (typeof window === 'undefined' || !window.localStorage) {
-    return {};
-  }
-
-  try {
-    const stored = window.localStorage.getItem(GROUP_EXPANSION_STORAGE_KEY);
-    if (!stored) {
-      return {};
-    }
-
-    const parsed = JSON.parse(stored);
-    return normalizeGroupExpansionStateValue(parsed);
-  } catch (error) {
-    console.error('Failed to load group expansion state from localStorage:', error);
-    return {};
-  }
-}
-
-async function loadGroupExpansionStateFromStorage() {
-  if (!chrome?.storage?.local?.get) {
-    groupExpansionState = loadGroupExpansionStateFromLocalStorage();
-    return;
-  }
-
-  try {
-    const result = await chrome.storage.local.get(GROUP_EXPANSION_STORAGE_KEY);
-    let raw = result ? result[GROUP_EXPANSION_STORAGE_KEY] : null;
-    if (typeof raw === 'string') {
-      try {
-        raw = JSON.parse(raw);
-      } catch (parseError) {
-        raw = null;
-      }
-    }
-
-    groupExpansionState = normalizeGroupExpansionStateValue(raw);
-
-    if (Object.keys(groupExpansionState).length === 0) {
-      const fallback = loadGroupExpansionStateFromLocalStorage();
-      if (Object.keys(fallback).length > 0) {
-        groupExpansionState = fallback;
-      }
-    }
-  } catch (error) {
-    console.error('Failed to load group expansion state:', error);
-    groupExpansionState = loadGroupExpansionStateFromLocalStorage();
-  }
-}
-
-function ensureGroupExpansionStateReady() {
-  if (!groupExpansionStateReadyPromise) {
-    groupExpansionStateReadyPromise = loadGroupExpansionStateFromStorage();
-  }
-  return groupExpansionStateReadyPromise;
-}
-
-function createGroupExpansionStoragePayload() {
-  if (!groupExpansionState || typeof groupExpansionState !== 'object') {
-    return {};
-  }
-
-  const payload = {};
-  for (const [key, value] of Object.entries(groupExpansionState)) {
-    if (value === true || value === false) {
-      payload[key] = value;
-    }
-  }
-  return payload;
-}
-
-function persistGroupExpansionStateToLocalStorage(payload) {
-  if (typeof window === 'undefined' || !window.localStorage) {
-    return;
-  }
-
-  try {
-    const keys = Object.keys(payload);
-    if (keys.length === 0) {
-      window.localStorage.removeItem(GROUP_EXPANSION_STORAGE_KEY);
-    } else {
-      window.localStorage.setItem(GROUP_EXPANSION_STORAGE_KEY, JSON.stringify(payload));
-    }
-  } catch (error) {
-    console.error('Failed to persist group expansion state to localStorage:', error);
-  }
-}
-
-function persistGroupExpansionState() {
-  const payload = createGroupExpansionStoragePayload();
-  persistGroupExpansionStateToLocalStorage(payload);
-
-  if (!chrome?.storage?.local) {
-    return;
-  }
-
-  try {
-    const keys = Object.keys(payload);
-    let operation;
-    if (keys.length === 0 && chrome.storage.local.remove) {
-      operation = chrome.storage.local.remove(GROUP_EXPANSION_STORAGE_KEY);
-    } else if (chrome.storage.local.set) {
-      operation = chrome.storage.local.set({
-        [GROUP_EXPANSION_STORAGE_KEY]: payload,
-      });
-    }
-
-    if (operation && typeof operation.catch === 'function') {
-      operation.catch((error) => {
-        console.error('Failed to persist group expansion state:', error);
-      });
-    }
-  } catch (error) {
-    console.error('Failed to persist group expansion state:', error);
-  }
-}
-
-function getStoredGroupExpanded(groupId) {
-  if (!Number.isFinite(groupId)) {
-    return null;
-  }
-
-  const key = String(groupId);
-  if (!groupExpansionState || typeof groupExpansionState !== 'object') {
-    return null;
-  }
-
-  if (!Object.prototype.hasOwnProperty.call(groupExpansionState, key)) {
-    return null;
-  }
-
-  const value = groupExpansionState[key];
-  if (value === true) {
-    return true;
-  }
-  if (value === false) {
-    return false;
-  }
-  return null;
-}
-
-function setStoredGroupExpanded(groupId, expanded) {
-  if (!Number.isFinite(groupId)) {
-    return;
-  }
-
-  if (!groupExpansionState || typeof groupExpansionState !== 'object') {
-    groupExpansionState = {};
-  }
-
-  groupExpansionState[String(groupId)] = expanded ? true : false;
-  groupExpansionStateReadyPromise = Promise.resolve();
-  persistGroupExpansionState();
-}
-
-function removeStoredGroupExpansionState(groupId) {
-  if (!groupExpansionState || typeof groupExpansionState !== 'object') {
-    return;
-  }
-
-  const key = String(groupId);
-  if (Object.prototype.hasOwnProperty.call(groupExpansionState, key)) {
-    delete groupExpansionState[key];
-    groupExpansionStateReadyPromise = Promise.resolve();
-    persistGroupExpansionState();
-  }
-}
-
-function applyStoredGroupExpansionToDom() {
-  const items = document.querySelectorAll('.group-item');
-  if (!items || items.length === 0) {
-    return;
-  }
-
-  for (const item of items) {
-    if (!(item instanceof HTMLElement)) {
-      continue;
-    }
-
-    const groupId = Number.parseInt(item.dataset.groupId, 10);
-    if (!Number.isFinite(groupId)) {
-      continue;
-    }
-
-    const storedExpanded = getStoredGroupExpanded(groupId);
-    if (storedExpanded == null) {
-      continue;
-    }
-
-    const headerButton = item.querySelector('.group-header');
-    const tabList = item.querySelector('.group-tab-list');
-    setGroupExpandedUI(headerButton, tabList, storedExpanded);
-  }
-}
-
 function loadScrollPositionFromStorage() {
   if (typeof window === 'undefined' || !window.localStorage) {
     return 0;
@@ -899,27 +265,6 @@ function persistScrollPositionToStorage(scrollTop) {
   } catch (error) {
     console.error('Failed to persist scroll position:', error);
   }
-}
-
-function preparePanelScrollForContentMutation() {
-  const previousScroll = Number.isFinite(storedScrollPosition)
-    ? Math.max(0, storedScrollPosition)
-    : 0;
-  const previousRestored = hasRestoredScrollPosition;
-
-  if (pendingScrollSaveFrameId !== null) {
-    cancelAnimationFrame(pendingScrollSaveFrameId);
-    pendingScrollSaveFrameId = null;
-  }
-
-  const currentScroll = getCurrentPanelScrollPosition();
-  persistScrollPositionToStorage(currentScroll);
-  hasRestoredScrollPosition = false;
-
-  return () => {
-    persistScrollPositionToStorage(previousScroll);
-    hasRestoredScrollPosition = previousRestored;
-  };
 }
 
 function getCurrentPanelScrollPosition() {
@@ -1038,8 +383,8 @@ function computeDefaultGroupLabel(groupId, groupInfo, tabs) {
     }
 
     if (domainCounts.size === 1) {
-      const [onlyDomain] = domainCounts.entries().next().value;
-      if (!hasDomainless) {
+      const [onlyDomain, count] = domainCounts.entries().next().value;
+      if (count >= 2 && !hasDomainless) {
         return onlyDomain;
       }
     }
@@ -1127,13 +472,11 @@ function createAudioButton(tab) {
       event.stopPropagation();
       const currentMuted = button.dataset.muted === 'true';
       const currentAudible = button.dataset.audible === 'true';
-      const rollbackScroll = preparePanelScrollForContentMutation();
       try {
         await chrome.tabs.update(tab.id, { muted: !currentMuted });
         updateAudioButtonState(button, { audible: currentAudible, muted: !currentMuted });
-        await refreshTabs();
+        refreshTabs();
       } catch (error) {
-        rollbackScroll();
         console.error('Failed to toggle tab mute:', error);
       }
     });
@@ -1332,14 +675,6 @@ function createTabListItem(tab) {
     li.dataset.tabId = String(tab.id);
   }
 
-  if (typeof tab.url === 'string' && tab.url.length > 0) {
-    li.dataset.tabUrl = tab.url;
-  } else if (typeof tab.pendingUrl === 'string' && tab.pendingUrl.length > 0) {
-    li.dataset.tabUrl = tab.pendingUrl;
-  } else {
-    delete li.dataset.tabUrl;
-  }
-
   const favicon = createFaviconElement(tab);
 
   const fullTitle = tab.title || '(no title)';
@@ -1356,12 +691,9 @@ function createTabListItem(tab) {
   closeButton.title = 'タブを閉じる';
   closeButton.addEventListener('click', async (event) => {
     event.stopPropagation();
-    const rollbackScroll = preparePanelScrollForContentMutation();
     try {
       await chrome.tabs.remove(tab.id);
-      await refreshTabs();
     } catch (error) {
-      rollbackScroll();
       console.error('Failed to close tab:', error);
     }
   });
@@ -1394,8 +726,6 @@ function createTabListItem(tab) {
       console.error('Failed to activate tab:', error);
     }
   });
-
-  tabMetadataMap.set(li, { tab });
 
   return li;
 }
@@ -1452,15 +782,6 @@ function finalizeGroupTitleEditing({
 
   input.replaceWith(replacement);
   item.classList.remove('group-item--editing');
-}
-
-function setGroupExpandedUI(headerButton, tabList, expanded) {
-  if (headerButton) {
-    headerButton.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-  }
-  if (tabList) {
-    tabList.hidden = !expanded;
-  }
 }
 
 function beginGroupTitleEditing({ item, groupId, groupInfo, tabs, currentElement }) {
@@ -1527,9 +848,7 @@ function createGroupAccordion(groupId, groupInfo, tabs) {
   }
 
   const listId = `tab-group-${groupId}`;
-  const storedExpanded = getStoredGroupExpanded(groupId);
-  const collapsedByChrome = Boolean(groupInfo?.collapsed);
-  const expandedByDefault = storedExpanded != null ? storedExpanded : !collapsedByChrome;
+  const expandedByDefault = groupInfo?.collapsed ? false : true;
   const { defaultLabel, displayLabel } = resolveGroupDisplayLabel(
     groupId,
     groupInfo,
@@ -1541,27 +860,11 @@ function createGroupAccordion(groupId, groupInfo, tabs) {
   item.className = 'group-item';
   item.dataset.groupId = String(groupId);
   item.dataset.defaultLabel = defaultLabel || '';
-  const storedTabs = Array.isArray(tabs)
-    ? tabs.map((tab) => {
-        if (!tab || typeof tab !== 'object') {
-          return tab;
-        }
-        const clone = { ...tab };
-        if (tab.mutedInfo && typeof tab.mutedInfo === 'object') {
-          clone.mutedInfo = { ...tab.mutedInfo };
-        }
-        return clone;
-      })
-    : [];
-  groupMetadataMap.set(item, {
-    groupId,
-    groupInfo: groupInfo ? { ...groupInfo } : null,
-    tabs: storedTabs,
-  });
 
   const tabList = document.createElement('ul');
   tabList.className = 'group-tab-list';
   tabList.id = listId;
+  tabList.hidden = !expandedByDefault;
 
   for (const tab of tabs) {
     tabList.appendChild(createTabListItem(tab));
@@ -1570,8 +873,8 @@ function createGroupAccordion(groupId, groupInfo, tabs) {
   const headerButton = document.createElement('button');
   headerButton.type = 'button';
   headerButton.className = 'group-header';
+  headerButton.setAttribute('aria-expanded', expandedByDefault ? 'true' : 'false');
   headerButton.setAttribute('aria-controls', listId);
-  setGroupExpandedUI(headerButton, tabList, expandedByDefault);
 
   const colorIndicator = document.createElement('span');
   colorIndicator.className = 'group-color-indicator';
@@ -1594,8 +897,8 @@ function createGroupAccordion(groupId, groupInfo, tabs) {
   headerButton.addEventListener('click', () => {
     const expanded = headerButton.getAttribute('aria-expanded') === 'true';
     const nextExpanded = !expanded;
-    setGroupExpandedUI(headerButton, tabList, nextExpanded);
-    setStoredGroupExpanded(groupId, nextExpanded);
+    headerButton.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
+    tabList.hidden = !nextExpanded;
   });
 
   item.appendChild(headerButton);
@@ -1923,7 +1226,6 @@ async function handleDomainGroupingOptionSelect(scope) {
     if (!response?.ok) {
       throw new Error(response?.error || 'Grouping failed');
     }
-    await refreshTabs();
   } catch (error) {
     console.error('Failed to group tabs by domain:', error);
   }
@@ -2135,12 +1437,6 @@ async function initializePreviewState() {
 }
 
 async function refreshTabs() {
-  hideContextMenu();
-  try {
-    await ensureGroupExpansionStateReady();
-  } catch (error) {
-    console.error('Failed to load group expansion state before refresh:', error);
-  }
   const tabs = await chrome.tabs.query({});
 
   const list = document.getElementById('tab-list');
@@ -2242,7 +1538,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupDomainGroupingControls();
   setupOptionsControls();
   setupScrollPersistence();
-  setupPanelContextMenu();
   await initializePreviewState();
   attachEventListeners();
   setupHeaderBehavior();
@@ -2365,21 +1660,5 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
           .catch(() => {});
       }
     }
-  }
-
-  const groupExpansionChange = changes[GROUP_EXPANSION_STORAGE_KEY];
-  if (groupExpansionChange) {
-    let raw = groupExpansionChange.newValue;
-    if (typeof raw === 'string') {
-      try {
-        raw = JSON.parse(raw);
-      } catch (error) {
-        raw = null;
-      }
-    }
-    groupExpansionState = normalizeGroupExpansionStateValue(raw);
-    groupExpansionStateReadyPromise = Promise.resolve();
-    persistGroupExpansionStateToLocalStorage(createGroupExpansionStoragePayload());
-    applyStoredGroupExpansionToDom();
   }
 });
