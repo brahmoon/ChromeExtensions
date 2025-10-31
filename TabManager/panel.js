@@ -8,8 +8,15 @@ const PREVIEW_REMOVED_MESSAGE = 'TabManagerPreviewRemoved';
 const PREVIEW_OVERLAY_UPDATE_MESSAGE = 'TabManagerPreviewOverlayUpdate';
 const PREVIEW_OVERLAY_VISIBILITY_MESSAGE = 'TabManagerPreviewOverlayVisibility';
 const PREVIEW_CLEAR_CACHE_MESSAGE = 'TabManagerClearPreviewCache';
+const GROUP_TABS_BY_DOMAIN_MESSAGE = 'TabManagerGroupTabsByDomain';
+const GROUP_LABEL_STORAGE_KEY = 'tabManagerGroupLabels';
 const PREVIEW_TOGGLE_ID = 'preview-toggle';
 const PROPERTY_BUTTON_ID = 'property-btn';
+const DOMAIN_GROUP_BUTTON_ID = 'domain-group-btn';
+const DOMAIN_GROUP_MENU_ID = 'domain-group-menu';
+const DOMAIN_GROUP_CONTAINER_ID = 'domain-group-container';
+const DOMAIN_GROUP_SCOPE_CURRENT = 'current';
+const DOMAIN_GROUP_SCOPE_ALL = 'all';
 const TAB_VIEW_ID = 'tab-view';
 const OPTIONS_VIEW_ID = 'options-view';
 const PREVIEW_CACHE_CLEAR_BUTTON_ID = 'preview-cache-clear-btn';
@@ -116,7 +123,9 @@ const previewUnavailableTabs = new Set();
 let activePreviewTabId = null;
 let previewRenderTimeout = null;
 let optionsViewOpen = false;
+let domainGroupingMenuOpen = false;
 let currentThemeId = DEFAULT_THEME_ID;
+let groupLabelMap = new Map();
 
 function notifyPanelClosed() {
   window.parent.postMessage({ type: 'TabManagerClosePanel' }, '*');
@@ -135,6 +144,279 @@ function postToParentMessage(type, detail = {}) {
       // ignore messaging failures
     }
   }
+}
+
+function loadGroupLabelPreferences() {
+  try {
+    const storedValue = window.localStorage.getItem(GROUP_LABEL_STORAGE_KEY);
+    if (!storedValue) {
+      groupLabelMap = new Map();
+      return;
+    }
+
+    const parsed = JSON.parse(storedValue);
+    if (!parsed || typeof parsed !== 'object') {
+      groupLabelMap = new Map();
+      return;
+    }
+
+    const entries = Object.entries(parsed).filter(([, value]) =>
+      typeof value === 'string' && value.trim().length > 0
+    );
+    groupLabelMap = new Map(entries.map(([key, value]) => [String(key), value.trim()]));
+  } catch (error) {
+    console.error('Failed to load stored group labels:', error);
+    groupLabelMap = new Map();
+  }
+}
+
+function persistGroupLabelPreferences() {
+  try {
+    const serialisable = {};
+    for (const [key, value] of groupLabelMap.entries()) {
+      if (typeof value === 'string' && value.trim().length > 0) {
+        serialisable[key] = value.trim();
+      }
+    }
+    window.localStorage.setItem(GROUP_LABEL_STORAGE_KEY, JSON.stringify(serialisable));
+  } catch (error) {
+    console.error('Failed to persist group labels:', error);
+  }
+}
+
+function getStoredGroupLabel(groupId) {
+  const key = String(groupId);
+  const value = groupLabelMap.get(key);
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function setStoredGroupLabel(groupId, label) {
+  const key = String(groupId);
+  const trimmed = typeof label === 'string' ? label.trim() : '';
+  if (trimmed.length === 0) {
+    removeStoredGroupLabel(groupId);
+    return;
+  }
+
+  if (groupLabelMap.get(key) === trimmed) {
+    return;
+  }
+
+  groupLabelMap.set(key, trimmed);
+  persistGroupLabelPreferences();
+}
+
+function removeStoredGroupLabel(groupId) {
+  const key = String(groupId);
+  if (!groupLabelMap.has(key)) {
+    return;
+  }
+
+  groupLabelMap.delete(key);
+  persistGroupLabelPreferences();
+}
+
+function cleanupStoredGroupLabels(activeGroupIdsIterable) {
+  if (!activeGroupIdsIterable) {
+    return;
+  }
+
+  const activeIds = new Set();
+  for (const id of activeGroupIdsIterable) {
+    activeIds.add(String(id));
+  }
+
+  let changed = false;
+  for (const key of Array.from(groupLabelMap.keys())) {
+    if (!activeIds.has(key)) {
+      groupLabelMap.delete(key);
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    persistGroupLabelPreferences();
+  }
+}
+
+function extractDomainForLabel(url) {
+  if (typeof url !== 'string' || url.length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(url);
+    const protocol = (parsed.protocol || '').toLowerCase();
+
+    if (!parsed.hostname) {
+      return null;
+    }
+
+    if (
+      protocol.startsWith('chrome') ||
+      protocol.startsWith('edge') ||
+      protocol.startsWith('about') ||
+      protocol.startsWith('view-source') ||
+      protocol.startsWith('devtools') ||
+      protocol.startsWith('chrome-extension') ||
+      protocol.startsWith('moz-extension') ||
+      protocol.startsWith('file') ||
+      protocol.startsWith('data')
+    ) {
+      return null;
+    }
+
+    return parsed.hostname.toLowerCase();
+  } catch (error) {
+    return null;
+  }
+}
+
+function computeFallbackGroupLabel(groupId, groupInfo, tabs) {
+  const infoTitle = typeof groupInfo?.title === 'string' ? groupInfo.title.trim() : '';
+  if (infoTitle.length > 0) {
+    return infoTitle;
+  }
+
+  if (Array.isArray(tabs) && tabs.length > 0) {
+    let uniformDomain = null;
+    let counted = 0;
+    for (const tab of tabs) {
+      const domain = extractDomainForLabel(tab?.url);
+      if (!domain) {
+        uniformDomain = null;
+        counted = 0;
+        break;
+      }
+      if (uniformDomain == null) {
+        uniformDomain = domain;
+      } else if (uniformDomain !== domain) {
+        uniformDomain = null;
+        break;
+      }
+      counted += 1;
+    }
+
+    if (uniformDomain && counted > 1) {
+      return uniformDomain;
+    }
+
+    return 'その他';
+  }
+
+  return `グループ ${groupId}`;
+}
+
+function resolveGroupDisplayLabel(groupId, groupInfo, tabs) {
+  const fallback = computeFallbackGroupLabel(groupId, groupInfo, tabs);
+  const stored = getStoredGroupLabel(groupId);
+  return {
+    label: stored || fallback,
+    fallback,
+  };
+}
+
+function beginGroupTitleEditing(titleElement, groupId, getFallbackLabel) {
+  if (!titleElement || titleElement.dataset.editing === 'true') {
+    return;
+  }
+
+  const headerButton = titleElement.closest('.group-header');
+  if (!headerButton) {
+    return;
+  }
+
+  titleElement.dataset.editing = 'true';
+  const currentLabel = (titleElement.textContent || '').trim();
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'group-title-edit';
+  input.value = currentLabel;
+
+  titleElement.hidden = true;
+
+  const countElement = headerButton.querySelector('.group-count');
+  if (countElement) {
+    headerButton.insertBefore(input, countElement);
+  } else {
+    headerButton.appendChild(input);
+  }
+
+  const finish = (commit) => {
+    if (titleElement.dataset.editing !== 'true') {
+      return;
+    }
+
+    const fallbackLabel = typeof getFallbackLabel === 'function' ? getFallbackLabel() : '';
+
+    if (commit) {
+      const nextValue = input.value.trim();
+      if (nextValue.length > 0) {
+        setStoredGroupLabel(groupId, nextValue);
+        titleElement.textContent = nextValue;
+        titleElement.title = nextValue;
+      } else {
+        removeStoredGroupLabel(groupId);
+        const fallback = fallbackLabel || `グループ ${groupId}`;
+        titleElement.textContent = fallback;
+        titleElement.title = fallback;
+      }
+    } else {
+      const stored = getStoredGroupLabel(groupId);
+      if (stored) {
+        titleElement.textContent = stored;
+        titleElement.title = stored;
+      } else {
+        const fallback = fallbackLabel || `グループ ${groupId}`;
+        titleElement.textContent = fallback;
+        titleElement.title = fallback;
+      }
+    }
+
+    titleElement.hidden = false;
+    delete titleElement.dataset.editing;
+    input.remove();
+  };
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      finish(true);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      finish(false);
+    }
+  });
+
+  input.addEventListener('blur', () => {
+    finish(true);
+  });
+
+  requestAnimationFrame(() => {
+    input.focus();
+    input.select();
+  });
+}
+
+function setupGroupTitleEditing(titleElement, groupId, getFallbackLabel) {
+  if (!titleElement) {
+    return;
+  }
+
+  titleElement.addEventListener('mousedown', (event) => {
+    event.stopPropagation();
+  });
+
+  titleElement.addEventListener('click', (event) => {
+    event.stopPropagation();
+  });
+
+  titleElement.addEventListener('dblclick', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    beginGroupTitleEditing(titleElement, groupId, getFallbackLabel);
+  });
 }
 
 function createPlaceholderFavicon(tab) {
@@ -472,7 +754,11 @@ function createGroupAccordion(groupId, groupInfo, tabs) {
 
   const listId = `tab-group-${groupId}`;
   const expandedByDefault = groupInfo?.collapsed ? false : true;
-  const titleText = (groupInfo?.title || '').trim() || `グループ ${groupId}`;
+  const { label: titleText } = resolveGroupDisplayLabel(
+    groupId,
+    groupInfo,
+    tabs
+  );
   const color = resolveGroupColor(groupInfo?.color);
 
   const item = document.createElement('li');
@@ -501,6 +787,8 @@ function createGroupAccordion(groupId, groupInfo, tabs) {
   const title = document.createElement('span');
   title.className = 'group-title';
   title.textContent = titleText;
+  title.title = titleText;
+  title.dataset.groupId = String(groupId);
 
   const count = document.createElement('span');
   count.className = 'group-count';
@@ -509,6 +797,10 @@ function createGroupAccordion(groupId, groupInfo, tabs) {
   headerButton.appendChild(colorIndicator);
   headerButton.appendChild(title);
   headerButton.appendChild(count);
+
+  setupGroupTitleEditing(title, groupId, () =>
+    computeFallbackGroupLabel(groupId, groupInfo, tabs)
+  );
 
   headerButton.addEventListener('click', () => {
     const expanded = headerButton.getAttribute('aria-expanded') === 'true';
@@ -722,8 +1014,226 @@ function setPropertyButtonExpanded(expanded) {
   button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
 }
 
+function getDomainGroupingButton() {
+  return document.getElementById(DOMAIN_GROUP_BUTTON_ID);
+}
+
+function getDomainGroupingMenu() {
+  return document.getElementById(DOMAIN_GROUP_MENU_ID);
+}
+
+function getDomainGroupingContainer() {
+  return document.getElementById(DOMAIN_GROUP_CONTAINER_ID);
+}
+
+function resetDomainGroupingMenuPosition(menu) {
+  if (!menu) {
+    return;
+  }
+
+  menu.style.removeProperty('left');
+  menu.style.removeProperty('right');
+  menu.style.removeProperty('top');
+  menu.style.removeProperty('bottom');
+  menu.style.removeProperty('transform');
+  menu.style.removeProperty('maxHeight');
+}
+
+function adjustDomainGroupingMenuPosition() {
+  const menu = getDomainGroupingMenu();
+  const panel = document.querySelector('.panel-shell');
+
+  if (!menu || !panel) {
+    return;
+  }
+
+  const horizontalPadding = 8;
+  const verticalPadding = 8;
+
+  resetDomainGroupingMenuPosition(menu);
+  menu.style.top = 'calc(100% + 4px)';
+  menu.style.right = '0';
+
+  requestAnimationFrame(() => {
+    const panelRect = panel.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+
+    const maxHeight = panelRect.height - verticalPadding * 2;
+    if (maxHeight > 0) {
+      menu.style.maxHeight = `${Math.floor(maxHeight)}px`;
+    }
+
+    let translateX = 0;
+    if (menuRect.right > panelRect.right - horizontalPadding) {
+      translateX = panelRect.right - horizontalPadding - menuRect.right;
+    } else if (menuRect.left < panelRect.left + horizontalPadding) {
+      translateX = panelRect.left + horizontalPadding - menuRect.left;
+    }
+
+    if (translateX !== 0) {
+      menu.style.transform = `translateX(${translateX}px)`;
+    }
+
+    if (menuRect.bottom > panelRect.bottom - verticalPadding) {
+      menu.style.top = 'auto';
+      menu.style.bottom = `calc(100% + 4px)`;
+    }
+  });
+}
+
+function setDomainGroupingMenuOpen(open, { focusButton = false } = {}) {
+  domainGroupingMenuOpen = Boolean(open);
+  const button = getDomainGroupingButton();
+  const menu = getDomainGroupingMenu();
+
+  if (button) {
+    button.setAttribute('aria-expanded', domainGroupingMenuOpen ? 'true' : 'false');
+  }
+
+  if (menu) {
+    if (domainGroupingMenuOpen) {
+      menu.hidden = false;
+      adjustDomainGroupingMenuPosition();
+      const firstItem = menu.querySelector('.header-dropdown__item');
+      if (firstItem) {
+        requestAnimationFrame(() => {
+          firstItem.focus();
+        });
+      }
+    } else if (focusButton && button) {
+      requestAnimationFrame(() => {
+        button.focus();
+      });
+    }
+
+    if (!domainGroupingMenuOpen) {
+      menu.hidden = true;
+      resetDomainGroupingMenuPosition(menu);
+    }
+  }
+}
+
+function toggleDomainGroupingMenu(forceState, options = {}) {
+  const nextState =
+    typeof forceState === 'boolean' ? forceState : !domainGroupingMenuOpen;
+  if (nextState === domainGroupingMenuOpen) {
+    if (!nextState && options.focusButton) {
+      const button = getDomainGroupingButton();
+      if (button) {
+        requestAnimationFrame(() => {
+          button.focus();
+        });
+      }
+    }
+    return;
+  }
+
+  setDomainGroupingMenuOpen(nextState, options);
+}
+
+async function handleDomainGroupingOptionSelect(scope) {
+  const normalizedScope =
+    scope === DOMAIN_GROUP_SCOPE_CURRENT
+      ? DOMAIN_GROUP_SCOPE_CURRENT
+      : scope === DOMAIN_GROUP_SCOPE_ALL
+      ? DOMAIN_GROUP_SCOPE_ALL
+      : null;
+
+  toggleDomainGroupingMenu(false, { focusButton: true });
+
+  if (!normalizedScope) {
+    return;
+  }
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: GROUP_TABS_BY_DOMAIN_MESSAGE,
+      scope: normalizedScope,
+    });
+    if (!response?.ok) {
+      throw new Error(response?.error || 'Grouping failed');
+    }
+  } catch (error) {
+    console.error('Failed to group tabs by domain:', error);
+  }
+}
+
+function setupDomainGroupingControls() {
+  const container = getDomainGroupingContainer();
+  const button = getDomainGroupingButton();
+  const menu = getDomainGroupingMenu();
+
+  if (!container || !button || !menu) {
+    return;
+  }
+
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleDomainGroupingMenu();
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!domainGroupingMenuOpen) {
+      return;
+    }
+
+    const containerElement = getDomainGroupingContainer();
+    if (!containerElement) {
+      toggleDomainGroupingMenu(false);
+      return;
+    }
+
+    const target = event.target;
+    if (!(target instanceof Node) || !containerElement.contains(target)) {
+      toggleDomainGroupingMenu(false);
+    }
+  });
+
+  menu.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    const item = target.closest('.header-dropdown__item');
+    if (!item) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const scope = item.dataset.scope;
+    handleDomainGroupingOptionSelect(scope);
+  });
+
+  menu.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && domainGroupingMenuOpen) {
+      event.preventDefault();
+      toggleDomainGroupingMenu(false, { focusButton: true });
+    }
+  });
+
+  window.addEventListener('resize', () => {
+    if (domainGroupingMenuOpen) {
+      adjustDomainGroupingMenuPosition();
+    }
+  });
+}
+
 function handleKeydown(event) {
-  if (event.key === 'Escape' && optionsViewOpen) {
+  if (event.key !== 'Escape') {
+    return;
+  }
+
+  if (domainGroupingMenuOpen) {
+    toggleDomainGroupingMenu(false, { focusButton: true });
+    event.stopPropagation();
+    event.preventDefault();
+    return;
+  }
+
+  if (optionsViewOpen) {
     toggleOptionsView(false);
   }
 }
@@ -798,6 +1308,9 @@ function setupOptionsControls() {
     button.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (domainGroupingMenuOpen) {
+        toggleDomainGroupingMenu(false);
+      }
       toggleOptionsView();
     });
   }
@@ -878,6 +1391,8 @@ async function refreshTabs() {
     }
   }
 
+  cleanupStoredGroupLabels(groupMap.keys());
+
   if (groupMap.size > 0 && chrome?.tabGroups?.get) {
     await Promise.all(
       Array.from(groupMap.entries()).map(async ([groupId, entry]) => {
@@ -940,7 +1455,9 @@ function attachEventListeners() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  loadGroupLabelPreferences();
   await initializeTheme();
+  setupDomainGroupingControls();
   setupOptionsControls();
   await initializePreviewState();
   attachEventListeners();
