@@ -20,10 +20,6 @@ const TAB_VIEW_ID = 'tab-view';
 const OPTIONS_VIEW_ID = 'options-view';
 const PREVIEW_CACHE_CLEAR_BUTTON_ID = 'preview-cache-clear-btn';
 const PREVIEW_CACHE_SIZE_ID = 'preview-cache-size';
-const CONTEXT_MENU_ID = 'context-menu';
-const CONTEXT_MENU_ITEM_CLASS = 'context-menu__item';
-const CONTEXT_TARGET_TYPE_TAB = 'tab';
-const CONTEXT_TARGET_TYPE_GROUP = 'group';
 const THEME_STORAGE_KEY = 'tabManagerTheme';
 const THEME_SELECT_ID = 'theme-select';
 const DEFAULT_THEME_ID = 'slate';
@@ -134,12 +130,6 @@ let groupLabels = loadGroupLabelsFromStorage();
 let storedScrollPosition = loadScrollPositionFromStorage();
 let hasRestoredScrollPosition = false;
 let pendingScrollSaveFrameId = null;
-const tabMetadataMap = new WeakMap();
-const groupMetadataMap = new WeakMap();
-let contextMenuState = {
-  type: null,
-  targetElement: null,
-};
 
 function getTabListElement() {
   return document.getElementById('tab-list');
@@ -162,395 +152,6 @@ function postToParentMessage(type, detail = {}) {
       // ignore messaging failures
     }
   }
-}
-
-function getContextMenuElement() {
-  return document.getElementById(CONTEXT_MENU_ID);
-}
-
-function resetContextMenuState() {
-  contextMenuState = {
-    type: null,
-    targetElement: null,
-  };
-}
-
-function hideContextMenu() {
-  const menu = getContextMenuElement();
-  if (!menu) {
-    resetContextMenuState();
-    return;
-  }
-
-  if (!menu.hidden) {
-    menu.hidden = true;
-    menu.innerHTML = '';
-  }
-
-  menu.removeAttribute('data-context-type');
-  resetContextMenuState();
-}
-
-function resolveTabContext(target) {
-  if (!target) {
-    return null;
-  }
-
-  const element = target.closest('.tab-item');
-  if (!element) {
-    return null;
-  }
-
-  const metadata = tabMetadataMap.get(element);
-  if (!metadata || !metadata.tab) {
-    return null;
-  }
-
-  return { element, tab: metadata.tab };
-}
-
-function resolveGroupContext(target) {
-  if (!target) {
-    return null;
-  }
-
-  const element = target.closest('.group-item');
-  if (!element) {
-    return null;
-  }
-
-  if (element.classList.contains('group-item--editing')) {
-    return null;
-  }
-
-  const metadata = groupMetadataMap.get(element);
-  if (!metadata || typeof metadata.groupId !== 'number') {
-    return null;
-  }
-
-  return { element, ...metadata };
-}
-
-function createContextMenuButton({ label, onSelect, disabled }) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = CONTEXT_MENU_ITEM_CLASS;
-  button.textContent = label;
-  button.disabled = Boolean(disabled);
-  button.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    hideContextMenu();
-    if (typeof onSelect === 'function') {
-      onSelect();
-    }
-  });
-  return button;
-}
-
-function positionContextMenu(menu, x, y) {
-  if (!menu) {
-    return;
-  }
-
-  menu.style.left = '0px';
-  menu.style.top = '0px';
-  menu.style.visibility = 'hidden';
-  menu.hidden = false;
-
-  requestAnimationFrame(() => {
-    const { innerWidth, innerHeight } = window;
-    const rect = menu.getBoundingClientRect();
-    let left = x;
-    let top = y;
-
-    if (left + rect.width > innerWidth) {
-      left = Math.max(0, innerWidth - rect.width - 4);
-    }
-
-    if (top + rect.height > innerHeight) {
-      top = Math.max(0, innerHeight - rect.height - 4);
-    }
-
-    menu.style.left = `${left}px`;
-    menu.style.top = `${top}px`;
-    menu.style.visibility = 'visible';
-    menu.focus({ preventScroll: true });
-  });
-}
-
-function showContextMenu({ type, items, x, y, targetElement }) {
-  const menu = getContextMenuElement();
-  if (!menu || !Array.isArray(items) || items.length === 0) {
-    hideContextMenu();
-    return;
-  }
-
-  menu.innerHTML = '';
-  for (const item of items) {
-    if (!item || typeof item.label !== 'string') {
-      continue;
-    }
-    menu.appendChild(
-      createContextMenuButton({
-        label: item.label,
-        onSelect: item.onSelect,
-        disabled: item.disabled,
-      })
-    );
-  }
-
-  if (menu.children.length === 0) {
-    hideContextMenu();
-    return;
-  }
-
-  menu.dataset.contextType = type || '';
-  contextMenuState = {
-    type: type || null,
-    targetElement: targetElement || null,
-  };
-
-  positionContextMenu(menu, x, y);
-}
-
-async function copyTabLinkToClipboard(tab) {
-  if (!tab) {
-    return;
-  }
-
-  const url = typeof tab.url === 'string' && tab.url.length > 0 ? tab.url : tab.pendingUrl;
-  if (typeof url !== 'string' || url.length === 0) {
-    return;
-  }
-
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    try {
-      await navigator.clipboard.writeText(url);
-      return;
-    } catch (error) {
-      console.debug('navigator.clipboard.writeText failed:', error);
-    }
-  }
-
-  const textarea = document.createElement('textarea');
-  textarea.value = url;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.opacity = '0';
-  document.body.appendChild(textarea);
-
-  try {
-    textarea.select();
-    document.execCommand('copy');
-  } catch (error) {
-    console.error('Failed to copy link to clipboard:', error);
-  } finally {
-    textarea.remove();
-  }
-}
-
-async function closeTabFromContextMenu(tab) {
-  if (!tab || typeof tab.id !== 'number') {
-    return;
-  }
-  try {
-    await chrome.tabs.remove(tab.id);
-  } catch (error) {
-    console.error('Failed to close tab from context menu:', error);
-  }
-}
-
-async function toggleTabMuteFromContextMenu(tab) {
-  if (!tab || typeof tab.id !== 'number') {
-    return;
-  }
-
-  const currentlyMuted = Boolean(tab?.mutedInfo?.muted);
-  try {
-    await chrome.tabs.update(tab.id, { muted: !currentlyMuted });
-    refreshTabs();
-  } catch (error) {
-    console.error('Failed to toggle mute from context menu:', error);
-  }
-}
-
-function beginGroupRenameFromContextMenu(groupElement, metadata) {
-  if (!groupElement || !metadata) {
-    return;
-  }
-
-  const titleElement = groupElement.querySelector('.group-title');
-  if (!titleElement) {
-    return;
-  }
-
-  beginGroupTitleEditing({
-    item: groupElement,
-    groupId: metadata.groupId,
-    groupInfo: metadata.groupInfo,
-    tabs: metadata.tabs,
-    currentElement: titleElement,
-  });
-}
-
-async function removeGroupFromContextMenu(metadata) {
-  if (!metadata) {
-    return;
-  }
-
-  const tabIds = Array.isArray(metadata.tabs)
-    ? metadata.tabs
-        .filter((tab) => tab && typeof tab.id === 'number')
-        .map((tab) => tab.id)
-    : [];
-
-  if (tabIds.length === 0) {
-    return;
-  }
-
-  if (!chrome.tabs?.ungroup) {
-    console.warn('Ungroup operation is not supported in this browser version.');
-    return;
-  }
-
-  try {
-    await chrome.tabs.ungroup(tabIds);
-    removeStoredGroupLabel(metadata.groupId);
-  } catch (error) {
-    console.error('Failed to remove group from context menu:', error);
-  } finally {
-    refreshTabs();
-  }
-}
-
-function showTabContextMenu(event, context) {
-  const { tab, element } = context;
-  const linkAvailable = Boolean(
-    (typeof tab?.url === 'string' && tab.url.length > 0) ||
-      (typeof tab?.pendingUrl === 'string' && tab.pendingUrl.length > 0)
-  );
-
-  const isMuted = Boolean(tab?.mutedInfo?.muted);
-
-  showContextMenu({
-    type: CONTEXT_TARGET_TYPE_TAB,
-    targetElement: element,
-    x: event.clientX,
-    y: event.clientY,
-    items: [
-      {
-        label: 'リンクをコピー',
-        onSelect: () => copyTabLinkToClipboard(tab),
-        disabled: !linkAvailable,
-      },
-      {
-        label: 'タブを閉じる',
-        onSelect: () => closeTabFromContextMenu(tab),
-      },
-      {
-        label: isMuted ? 'タブのミュートを解除' : 'タブをミュート',
-        onSelect: () => toggleTabMuteFromContextMenu(tab),
-      },
-    ],
-  });
-}
-
-function showGroupContextMenu(event, context) {
-  const { element } = context;
-
-  showContextMenu({
-    type: CONTEXT_TARGET_TYPE_GROUP,
-    targetElement: element,
-    x: event.clientX,
-    y: event.clientY,
-    items: [
-      {
-        label: 'グループ名を変更',
-        onSelect: () => beginGroupRenameFromContextMenu(element, context),
-      },
-      {
-        label: 'グループを削除',
-        onSelect: () => removeGroupFromContextMenu(context),
-      },
-    ],
-  });
-}
-
-function handlePanelContextMenu(event) {
-  const menu = getContextMenuElement();
-  if (menu && menu.contains(event.target)) {
-    event.preventDefault();
-    return;
-  }
-
-  event.preventDefault();
-  hideContextMenu();
-
-  const tabContext = resolveTabContext(event.target);
-  if (tabContext) {
-    event.stopPropagation();
-    showTabContextMenu(event, tabContext);
-    return;
-  }
-
-  const groupContext = resolveGroupContext(event.target);
-  if (groupContext) {
-    event.stopPropagation();
-    showGroupContextMenu(event, groupContext);
-  }
-}
-
-function handleContextMenuGlobalClick(event) {
-  const menu = getContextMenuElement();
-  if (!menu || menu.hidden) {
-    return;
-  }
-
-  if (menu.contains(event.target)) {
-    return;
-  }
-
-  hideContextMenu();
-}
-
-function handleContextMenuPointerDown(event) {
-  const menu = getContextMenuElement();
-  if (!menu || menu.hidden) {
-    return;
-  }
-
-  if (menu.contains(event.target)) {
-    return;
-  }
-
-  hideContextMenu();
-}
-
-function setupPanelContextMenu() {
-  const menu = getContextMenuElement();
-  if (!menu) {
-    return;
-  }
-
-  if (!menu.hasAttribute('tabindex')) {
-    menu.tabIndex = -1;
-  }
-
-  document.addEventListener('contextmenu', handlePanelContextMenu);
-  document.addEventListener('click', handleContextMenuGlobalClick);
-  document.addEventListener('pointerdown', handleContextMenuPointerDown);
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') {
-      hideContextMenu();
-    }
-  });
-  document.addEventListener('scroll', hideContextMenu, true);
-  window.addEventListener('blur', hideContextMenu);
-  window.addEventListener('resize', hideContextMenu);
-  menu.addEventListener('contextmenu', (event) => {
-    event.preventDefault();
-  });
 }
 
 function loadGroupLabelsFromStorage() {
@@ -782,8 +383,8 @@ function computeDefaultGroupLabel(groupId, groupInfo, tabs) {
     }
 
     if (domainCounts.size === 1) {
-      const [onlyDomain] = domainCounts.entries().next().value;
-      if (!hasDomainless) {
+      const [onlyDomain, count] = domainCounts.entries().next().value;
+      if (count >= 2 && !hasDomainless) {
         return onlyDomain;
       }
     }
@@ -1074,14 +675,6 @@ function createTabListItem(tab) {
     li.dataset.tabId = String(tab.id);
   }
 
-  if (typeof tab.url === 'string' && tab.url.length > 0) {
-    li.dataset.tabUrl = tab.url;
-  } else if (typeof tab.pendingUrl === 'string' && tab.pendingUrl.length > 0) {
-    li.dataset.tabUrl = tab.pendingUrl;
-  } else {
-    delete li.dataset.tabUrl;
-  }
-
   const favicon = createFaviconElement(tab);
 
   const fullTitle = tab.title || '(no title)';
@@ -1133,8 +726,6 @@ function createTabListItem(tab) {
       console.error('Failed to activate tab:', error);
     }
   });
-
-  tabMetadataMap.set(li, { tab });
 
   return li;
 }
@@ -1269,23 +860,6 @@ function createGroupAccordion(groupId, groupInfo, tabs) {
   item.className = 'group-item';
   item.dataset.groupId = String(groupId);
   item.dataset.defaultLabel = defaultLabel || '';
-  const storedTabs = Array.isArray(tabs)
-    ? tabs.map((tab) => {
-        if (!tab || typeof tab !== 'object') {
-          return tab;
-        }
-        const clone = { ...tab };
-        if (tab.mutedInfo && typeof tab.mutedInfo === 'object') {
-          clone.mutedInfo = { ...tab.mutedInfo };
-        }
-        return clone;
-      })
-    : [];
-  groupMetadataMap.set(item, {
-    groupId,
-    groupInfo: groupInfo ? { ...groupInfo } : null,
-    tabs: storedTabs,
-  });
 
   const tabList = document.createElement('ul');
   tabList.className = 'group-tab-list';
@@ -1863,7 +1437,6 @@ async function initializePreviewState() {
 }
 
 async function refreshTabs() {
-  hideContextMenu();
   const tabs = await chrome.tabs.query({});
 
   const list = document.getElementById('tab-list');
@@ -1965,7 +1538,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupDomainGroupingControls();
   setupOptionsControls();
   setupScrollPersistence();
-  setupPanelContextMenu();
   await initializePreviewState();
   attachEventListeners();
   setupHeaderBehavior();
