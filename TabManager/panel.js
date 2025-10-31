@@ -14,6 +14,9 @@ const TAB_VIEW_ID = 'tab-view';
 const OPTIONS_VIEW_ID = 'options-view';
 const PREVIEW_CACHE_CLEAR_BUTTON_ID = 'preview-cache-clear-btn';
 const PREVIEW_CACHE_SIZE_ID = 'preview-cache-size';
+const THEME_STORAGE_KEY = 'tabManagerTheme';
+const THEME_SELECT_ID = 'theme-select';
+const DEFAULT_THEME_ID = 'slate';
 const PREVIEW_DEFAULT_MESSAGE = 'タブをホバーしてプレビューを表示';
 const PREVIEW_DISABLED_MESSAGE = '設定画面からプレビューを有効にしてください';
 const PREVIEW_UNAVAILABLE_MESSAGE = 'このタブのプレビュー画像は利用できません';
@@ -32,12 +35,88 @@ const TAB_GROUP_COLORS = {
   orange: '#fa7b17',
 };
 
+const THEMES = {
+  slate: {
+    label: 'スレート',
+    colorScheme: 'dark',
+    properties: {
+      '--tm-bg': '#202124',
+      '--tm-header-bg': '#303134',
+      '--tm-border': '#444',
+      '--tm-divider': '#333',
+      '--tm-hover-bg': '#3c4043',
+      '--tm-active-bg': 'rgba(138, 180, 248, 0.18)',
+      '--tm-text-primary': '#e8eaed',
+      '--tm-text-muted': '#bdc1c6',
+      '--tm-button-bg': '#3c4043',
+      '--tm-button-border': '#5f6368',
+      '--tm-button-hover-bg': '#4a4f54',
+      '--tm-button-hover-border': '#8ab4f8',
+      '--tm-icon-muted': '#a9a9a9',
+      '--tm-overlay': 'rgba(255, 255, 255, 0.12)',
+      '--tm-soft-overlay': 'rgba(255, 255, 255, 0.08)',
+      '--tm-strong-overlay': 'rgba(255, 255, 255, 0.18)',
+      '--tm-indicator-border': 'rgba(255, 255, 255, 0.15)',
+      '--tm-accent': '#8ab4f8',
+    },
+  },
+  ocean: {
+    label: 'オーシャン',
+    colorScheme: 'dark',
+    properties: {
+      '--tm-bg': '#16222b',
+      '--tm-header-bg': '#1d2d38',
+      '--tm-border': '#27465a',
+      '--tm-divider': '#203648',
+      '--tm-hover-bg': '#233848',
+      '--tm-active-bg': 'rgba(94, 177, 255, 0.22)',
+      '--tm-text-primary': '#f1f7ff',
+      '--tm-text-muted': '#9fb6c8',
+      '--tm-button-bg': '#22384a',
+      '--tm-button-border': '#36566d',
+      '--tm-button-hover-bg': '#29445a',
+      '--tm-button-hover-border': '#5eb1ff',
+      '--tm-icon-muted': '#9fb6c8',
+      '--tm-overlay': 'rgba(94, 177, 255, 0.16)',
+      '--tm-soft-overlay': 'rgba(94, 177, 255, 0.12)',
+      '--tm-strong-overlay': 'rgba(94, 177, 255, 0.25)',
+      '--tm-indicator-border': 'rgba(94, 177, 255, 0.35)',
+      '--tm-accent': '#5eb1ff',
+    },
+  },
+  rose: {
+    label: 'ローズ',
+    colorScheme: 'dark',
+    properties: {
+      '--tm-bg': '#2b1d27',
+      '--tm-header-bg': '#3a2635',
+      '--tm-border': '#523545',
+      '--tm-divider': '#412d3b',
+      '--tm-hover-bg': '#3b2838',
+      '--tm-active-bg': 'rgba(255, 140, 188, 0.22)',
+      '--tm-text-primary': '#f8e9f1',
+      '--tm-text-muted': '#d9b7c9',
+      '--tm-button-bg': '#3d2a3a',
+      '--tm-button-border': '#63455a',
+      '--tm-button-hover-bg': '#4a3347',
+      '--tm-button-hover-border': '#ff8cbc',
+      '--tm-icon-muted': '#cfa2b6',
+      '--tm-overlay': 'rgba(255, 140, 188, 0.14)',
+      '--tm-soft-overlay': 'rgba(255, 140, 188, 0.1)',
+      '--tm-strong-overlay': 'rgba(255, 140, 188, 0.24)',
+      '--tm-indicator-border': 'rgba(255, 140, 188, 0.28)',
+      '--tm-accent': '#ff8cbc',
+    },
+  },
+};
+
 let previewEnabled = false;
 let previewCache = {};
 const previewUnavailableTabs = new Set();
 let activePreviewTabId = null;
 let previewRenderTimeout = null;
 let optionsViewOpen = false;
+let currentThemeId = DEFAULT_THEME_ID;
 
 function notifyPanelClosed() {
   window.parent.postMessage({ type: 'TabManagerClosePanel' }, '*');
@@ -153,6 +232,120 @@ function resolveGroupColor(colorName) {
     return TAB_GROUP_COLORS.grey;
   }
   return TAB_GROUP_COLORS[colorName] || TAB_GROUP_COLORS.grey;
+}
+
+function getResolvedTheme(themeId) {
+  if (typeof themeId === 'string' && THEMES[themeId]) {
+    return { id: themeId, definition: THEMES[themeId] };
+  }
+  return { id: DEFAULT_THEME_ID, definition: THEMES[DEFAULT_THEME_ID] };
+}
+
+function applyThemeStyles(themeId) {
+  const { id, definition } = getResolvedTheme(themeId);
+  const root = document.documentElement;
+  if (!root || !definition) {
+    return;
+  }
+
+  const properties = definition.properties || {};
+  for (const [name, value] of Object.entries(properties)) {
+    try {
+      root.style.setProperty(name, value);
+    } catch (error) {
+      // ignore style assignment failures
+    }
+  }
+
+  const scheme = definition.colorScheme || 'dark';
+  try {
+    root.style.setProperty('--tm-color-scheme', scheme);
+    root.style.colorScheme = scheme;
+  } catch (error) {
+    // ignore color scheme assignment failures
+  }
+
+  root.setAttribute('data-tab-manager-theme', id);
+  if (document.body) {
+    document.body.setAttribute('data-tab-manager-theme', id);
+  }
+}
+
+function getThemeSelect() {
+  return document.getElementById(THEME_SELECT_ID);
+}
+
+function populateThemeSelectOptions(select) {
+  if (!select) {
+    return;
+  }
+
+  const options = Object.entries(THEMES);
+  select.textContent = '';
+  for (const [themeId, theme] of options) {
+    const option = document.createElement('option');
+    option.value = themeId;
+    option.textContent = theme?.label || themeId;
+    select.appendChild(option);
+  }
+
+  select.value = currentThemeId;
+}
+
+function updateThemeSelectUI() {
+  const select = getThemeSelect();
+  if (!select) {
+    return;
+  }
+  if (select.value !== currentThemeId) {
+    select.value = currentThemeId;
+  }
+}
+
+function setTheme(themeId, { persist = true } = {}) {
+  const { id } = getResolvedTheme(themeId);
+  currentThemeId = id;
+  applyThemeStyles(id);
+  updateThemeSelectUI();
+
+  if (!persist) {
+    return;
+  }
+
+  try {
+    if (chrome?.storage?.local?.set) {
+      const result = chrome.storage.local.set({ [THEME_STORAGE_KEY]: id });
+      if (result && typeof result.catch === 'function') {
+        result.catch(() => {});
+      }
+    }
+  } catch (error) {
+    // ignore storage persistence failures
+  }
+}
+
+function handleThemeSelectChange(event) {
+  const nextThemeId = event?.target?.value;
+  setTheme(nextThemeId);
+}
+
+async function initializeTheme() {
+  if (!chrome?.storage?.local?.get) {
+    setTheme(DEFAULT_THEME_ID, { persist: false });
+    return;
+  }
+
+  try {
+    const stored = await chrome.storage.local.get({
+      [THEME_STORAGE_KEY]: DEFAULT_THEME_ID,
+    });
+    const storedId = stored?.[THEME_STORAGE_KEY];
+    setTheme(typeof storedId === 'string' ? storedId : DEFAULT_THEME_ID, {
+      persist: false,
+    });
+  } catch (error) {
+    setTheme(DEFAULT_THEME_ID, { persist: false });
+  }
 }
 
 function formatBytes(bytes) {
@@ -614,6 +807,13 @@ function setupOptionsControls() {
     toggle.addEventListener('change', handlePreviewToggleChange);
   }
 
+  const themeSelect = getThemeSelect();
+  if (themeSelect) {
+    populateThemeSelectOptions(themeSelect);
+    themeSelect.addEventListener('change', handleThemeSelectChange);
+    updateThemeSelectUI();
+  }
+
   const clearButton = document.getElementById(PREVIEW_CACHE_CLEAR_BUTTON_ID);
   if (clearButton) {
     clearButton.addEventListener('click', handlePreviewCacheClear);
@@ -718,14 +918,9 @@ async function refreshTabs() {
 
 function attachEventListeners() {
   const closeButton = document.getElementById('close-btn');
-  const collapseHandleButton = document.getElementById('collapse-handle-btn');
 
   if (closeButton) {
     closeButton.addEventListener('click', notifyPanelClosed);
-  }
-
-  if (collapseHandleButton) {
-    collapseHandleButton.addEventListener('click', notifyPanelClosed);
   }
 
   chrome.tabs.onActivated.addListener(refreshTabs);
@@ -745,6 +940,7 @@ function attachEventListeners() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  await initializeTheme();
   setupOptionsControls();
   await initializePreviewState();
   attachEventListeners();
