@@ -10,9 +10,6 @@ const PREVIEW_OVERLAY_VISIBILITY_MESSAGE = 'TabManagerPreviewOverlayVisibility';
 const PREVIEW_CLEAR_CACHE_MESSAGE = 'TabManagerClearPreviewCache';
 const PREVIEW_TOGGLE_ID = 'preview-toggle';
 const PROPERTY_BUTTON_ID = 'property-btn';
-const DOMAIN_GROUP_BUTTON_ID = 'domain-group-btn';
-const DOMAIN_GROUP_MENU_ID = 'domain-group-menu';
-const DOMAIN_GROUP_MENU_ITEM_SELECTOR = '.domain-group-menu__item';
 const TAB_VIEW_ID = 'tab-view';
 const OPTIONS_VIEW_ID = 'options-view';
 const PREVIEW_CACHE_CLEAR_BUTTON_ID = 'preview-cache-clear-btn';
@@ -25,7 +22,6 @@ const PREVIEW_DISABLED_MESSAGE = '設定画面からプレビューを有効に�
 const PREVIEW_UNAVAILABLE_MESSAGE = 'このタブのプレビュー画像は利用できません';
 const PREVIEW_REMOVAL_REASON_UNSUPPORTED = 'unsupported';
 const PREVIEW_RENDER_THROTTLE_MS = 150;
-const GROUP_TABS_BY_DOMAIN_MESSAGE = 'TabManagerGroupTabsByDomain';
 
 const TAB_GROUP_COLORS = {
   grey: '#5f6368',
@@ -121,7 +117,6 @@ let activePreviewTabId = null;
 let previewRenderTimeout = null;
 let optionsViewOpen = false;
 let currentThemeId = DEFAULT_THEME_ID;
-let domainGroupMenuOpen = false;
 
 function notifyPanelClosed() {
   window.parent.postMessage({ type: 'TabManagerClosePanel' }, '*');
@@ -719,107 +714,6 @@ function getPropertyButton() {
   return document.getElementById(PROPERTY_BUTTON_ID);
 }
 
-function getDomainGroupButton() {
-  return document.getElementById(DOMAIN_GROUP_BUTTON_ID);
-}
-
-function getDomainGroupMenu() {
-  return document.getElementById(DOMAIN_GROUP_MENU_ID);
-}
-
-function handleDomainGroupDocumentClick(event) {
-  const menu = getDomainGroupMenu();
-  const button = getDomainGroupButton();
-  if (!menu || !button) {
-    return;
-  }
-
-  if (button.contains(event.target) || menu.contains(event.target)) {
-    return;
-  }
-
-  setDomainGroupMenuOpen(false);
-}
-
-function setDomainGroupMenuOpen(open) {
-  domainGroupMenuOpen = Boolean(open);
-  const menu = getDomainGroupMenu();
-  const button = getDomainGroupButton();
-
-  if (menu) {
-    menu.hidden = !domainGroupMenuOpen;
-    menu.setAttribute('aria-hidden', domainGroupMenuOpen ? 'false' : 'true');
-  }
-
-  if (button) {
-    button.setAttribute('aria-expanded', domainGroupMenuOpen ? 'true' : 'false');
-  }
-
-  if (domainGroupMenuOpen) {
-    document.addEventListener('click', handleDomainGroupDocumentClick, true);
-  } else {
-    document.removeEventListener('click', handleDomainGroupDocumentClick, true);
-  }
-}
-
-function toggleDomainGroupMenu() {
-  setDomainGroupMenuOpen(!domainGroupMenuOpen);
-}
-
-async function getLastFocusedWindowId() {
-  if (!chrome?.windows?.getLastFocused) {
-    return null;
-  }
-
-  try {
-    if (chrome.windows.getLastFocused.length > 0) {
-      return await new Promise((resolve) => {
-        try {
-          chrome.windows.getLastFocused({ populate: false }, (windowInfo) => {
-            if (chrome.runtime.lastError) {
-              resolve(null);
-              return;
-            }
-            resolve(
-              windowInfo && typeof windowInfo.id === 'number' ? windowInfo.id : null
-            );
-          });
-        } catch (error) {
-          resolve(null);
-        }
-      });
-    }
-
-    const windowInfo = await chrome.windows.getLastFocused({ populate: false });
-    return windowInfo && typeof windowInfo.id === 'number' ? windowInfo.id : null;
-  } catch (error) {
-    return null;
-  }
-}
-
-async function handleDomainGrouping(scope) {
-  const normalizedScope = scope === 'all' ? 'all' : 'current';
-  const payload = { type: GROUP_TABS_BY_DOMAIN_MESSAGE, scope: normalizedScope };
-
-  if (normalizedScope === 'current') {
-    const windowId = await getLastFocusedWindowId();
-    if (typeof windowId === 'number') {
-      payload.windowId = windowId;
-    }
-  }
-
-  try {
-    const response = await chrome.runtime.sendMessage(payload);
-    if (!response?.ok) {
-      throw new Error(response?.error || 'Failed to group tabs');
-    }
-  } catch (error) {
-    console.error('Failed to group tabs by domain:', error);
-  } finally {
-    refreshTabs();
-  }
-}
-
 function setPropertyButtonExpanded(expanded) {
   const button = getPropertyButton();
   if (!button) {
@@ -829,18 +723,7 @@ function setPropertyButtonExpanded(expanded) {
 }
 
 function handleKeydown(event) {
-  if (event.key !== 'Escape') {
-    return;
-  }
-
-  if (domainGroupMenuOpen) {
-    setDomainGroupMenuOpen(false);
-    event.stopPropagation();
-    event.preventDefault();
-    return;
-  }
-
-  if (optionsViewOpen) {
+  if (event.key === 'Escape' && optionsViewOpen) {
     toggleOptionsView(false);
   }
 }
@@ -870,7 +753,6 @@ function applyOptionsViewState() {
 }
 
 function toggleOptionsView(forceState) {
-  setDomainGroupMenuOpen(false);
   const nextState =
     typeof forceState === 'boolean' ? forceState : !optionsViewOpen;
   if (nextState === optionsViewOpen) {
@@ -916,7 +798,6 @@ function setupOptionsControls() {
     button.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      setDomainGroupMenuOpen(false);
       toggleOptionsView();
     });
   }
@@ -942,40 +823,6 @@ function setupOptionsControls() {
   window.addEventListener('keydown', handleKeydown);
 
   applyOptionsViewState();
-}
-
-function setupDomainGroupingControls() {
-  const button = getDomainGroupButton();
-  const menu = getDomainGroupMenu();
-
-  if (!button || !menu) {
-    return;
-  }
-
-  button.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    toggleDomainGroupMenu();
-  });
-
-  menu.addEventListener('click', (event) => {
-    const target = event.target;
-    if (!target || !(target instanceof HTMLElement)) {
-      return;
-    }
-
-    if (!target.matches(DOMAIN_GROUP_MENU_ITEM_SELECTOR)) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    setDomainGroupMenuOpen(false);
-    const scope = target.dataset.scope === 'all' ? 'all' : 'current';
-    handleDomainGrouping(scope);
-  });
-
-  setDomainGroupMenuOpen(false);
 }
 
 async function initializePreviewState() {
@@ -1095,7 +942,6 @@ function attachEventListeners() {
 document.addEventListener('DOMContentLoaded', async () => {
   await initializeTheme();
   setupOptionsControls();
-  setupDomainGroupingControls();
   await initializePreviewState();
   attachEventListeners();
   setupHeaderBehavior();
