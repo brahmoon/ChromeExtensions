@@ -10,6 +10,37 @@
     <header>
       <div class="header-left">
         <h2 id="ext-title">Tab Manager</h2>
+      </div>
+      <div class="header-right">
+        <div class="domain-group-control">
+          <button
+            id="domain-group-btn"
+            type="button"
+            title="ドメインでグループ化"
+            aria-haspopup="true"
+            aria-expanded="false"
+            aria-controls="domain-group-menu"
+          >📚</button>
+          <div
+            id="domain-group-menu"
+            class="domain-group-menu"
+            role="menu"
+            hidden
+          >
+            <button
+              type="button"
+              class="domain-group-menu__item"
+              data-scope="current"
+              role="menuitem"
+            >現在のウィンドウをグループ化</button>
+            <button
+              type="button"
+              class="domain-group-menu__item"
+              data-scope="all"
+              role="menuitem"
+            >すべてのウィンドウをグループ化</button>
+          </div>
+        </div>
         <button
           id="property-btn"
           type="button"
@@ -17,8 +48,8 @@
           aria-expanded="false"
           aria-controls="options-view"
         >⚙</button>
+        <button id="close-btn">&gt;</button>
       </div>
-      <button id="close-btn">&gt;</button>
     </header>
     <div id="panel-content">
       <section id="tab-view" class="panel-view" aria-labelledby="tab-view-heading">
