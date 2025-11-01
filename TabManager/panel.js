@@ -11,6 +11,7 @@ const PREVIEW_CLEAR_CACHE_MESSAGE = 'TabManagerClearPreviewCache';
 const GROUP_TABS_BY_DOMAIN_MESSAGE = 'TabManagerGroupTabsByDomain';
 const PREVIEW_TOGGLE_ID = 'preview-toggle';
 const PROPERTY_BUTTON_ID = 'property-btn';
+const AUDIO_FILTER_BUTTON_ID = 'audio-filter-btn';
 const DOMAIN_GROUP_BUTTON_ID = 'domain-group-btn';
 const DOMAIN_GROUP_MENU_ID = 'domain-group-menu';
 const DOMAIN_GROUP_CONTAINER_ID = 'domain-group-container';
@@ -139,6 +140,7 @@ let pendingScrollSaveFrameId = null;
 let pendingScrollResumeFrameId = null;
 let scrollPersistenceSuspended = false;
 let refreshTabsRequestId = 0;
+let audioFilterEnabled = false;
 const tabMetadataMap = new WeakMap();
 const groupMetadataMap = new WeakMap();
 let contextMenuState = {
@@ -173,6 +175,10 @@ function getContextMenuElement() {
   return document.getElementById(CONTEXT_MENU_ID);
 }
 
+function getAudioFilterButton() {
+  return document.getElementById(AUDIO_FILTER_BUTTON_ID);
+}
+
 function resetContextMenuState() {
   contextMenuState = {
     type: null,
@@ -194,6 +200,29 @@ function hideContextMenu() {
 
   menu.removeAttribute('data-context-type');
   resetContextMenuState();
+}
+
+function updateAudioFilterButtonUI() {
+  const button = getAudioFilterButton();
+  if (!button) {
+    return;
+  }
+
+  button.setAttribute('aria-pressed', audioFilterEnabled ? 'true' : 'false');
+}
+
+function toggleAudioFilter(forceState) {
+  const nextState =
+    typeof forceState === 'boolean' ? forceState : !audioFilterEnabled;
+
+  if (nextState === audioFilterEnabled) {
+    updateAudioFilterButtonUI();
+    return;
+  }
+
+  audioFilterEnabled = nextState;
+  updateAudioFilterButtonUI();
+  refreshTabs();
 }
 
 function resolveTabContext(target) {
@@ -1983,6 +2012,19 @@ function setupDomainGroupingControls() {
   });
 }
 
+function setupAudioFilterControls() {
+  const button = getAudioFilterButton();
+  if (!button) {
+    return;
+  }
+
+  button.addEventListener('click', () => {
+    toggleAudioFilter();
+  });
+
+  updateAudioFilterButtonUI();
+}
+
 function handleKeydown(event) {
   if (event.key !== 'Escape') {
     return;
@@ -2143,6 +2185,38 @@ async function refreshTabs() {
   }
 
   const tabIdsForQueue = [];
+
+  if (audioFilterEnabled) {
+    const fragment = document.createDocumentFragment();
+
+    for (const tab of tabs) {
+      const isAudible = Boolean(tab?.audible);
+      const isMuted = Boolean(tab?.mutedInfo && tab.mutedInfo.muted);
+      if (!isAudible && !isMuted) {
+        continue;
+      }
+
+      if (typeof tab.id === 'number') {
+        tabIdsForQueue.push(tab.id);
+      }
+
+      fragment.appendChild(createTabListItem(tab));
+    }
+
+    if (requestId !== refreshTabsRequestId) {
+      return;
+    }
+
+    list.replaceChildren(fragment);
+    syncPreviewQueue(tabIdsForQueue);
+
+    if (scrollPersistenceSuspended || !hasRestoredScrollPosition) {
+      restoreScrollPositionFromStorage();
+    }
+
+    return;
+  }
+
   const groupMap = new Map();
   const structure = [];
 
@@ -2246,6 +2320,7 @@ function attachEventListeners() {
 document.addEventListener('DOMContentLoaded', async () => {
   await initializeTheme();
   setupDomainGroupingControls();
+  setupAudioFilterControls();
   setupOptionsControls();
   await initializeGroupExpansionState();
   setupScrollPersistence();

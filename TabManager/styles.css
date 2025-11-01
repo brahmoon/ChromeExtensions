@@ -125,6 +125,10 @@ header.is-compact {
   background-color: var(--tm-strong-overlay);
 }
 
+.header-icon-button[aria-pressed='true'] {
+  background-color: var(--tm-strong-overlay);
+}
+
 .header-icon-button:hover,
 .header-icon-button:focus {
   background-color: var(--tm-overlay);
