@@ -15,6 +15,7 @@ const AUDIO_FILTER_BUTTON_ID = 'audio-filter-btn';
 const DOMAIN_GROUP_BUTTON_ID = 'domain-group-btn';
 const DOMAIN_GROUP_MENU_ID = 'domain-group-menu';
 const DOMAIN_GROUP_CONTAINER_ID = 'domain-group-container';
+const HISTORY_TOGGLE_BUTTON_ID = 'history-toggle-btn';
 const DOMAIN_GROUP_SCOPE_CURRENT = 'current';
 const DOMAIN_GROUP_SCOPE_ALL = 'all';
 const TAB_VIEW_ID = 'tab-view';
@@ -31,6 +32,7 @@ const DEFAULT_THEME_ID = 'slate';
 const GROUP_LABELS_STORAGE_KEY = 'tabManagerGroupLabels';
 const GROUP_EXPANSION_STORAGE_KEY = 'tabManagerGroupExpansionState';
 const SCROLL_POSITION_STORAGE_KEY = 'tabManagerScrollPosition';
+const TAB_HISTORY_STORAGE_KEY = 'tabManagerActivationHistory';
 const PREVIEW_DEFAULT_MESSAGE = 'タブをホバーしてプレビューを表示';
 const PREVIEW_DISABLED_MESSAGE = '設定画面からプレビューを有効にしてください';
 const PREVIEW_UNAVAILABLE_MESSAGE = 'このタブのプレビュー画像は利用できません';
@@ -141,6 +143,10 @@ let pendingScrollResumeFrameId = null;
 let scrollPersistenceSuspended = false;
 let refreshTabsRequestId = 0;
 let audioFilterEnabled = false;
+let historyViewEnabled = false;
+let activationHistory = loadActivationHistoryFromStorage();
+let lastKnownActiveTabId = null;
+let lastKnownOpenTabIds = new Set();
 const tabMetadataMap = new WeakMap();
 const groupMetadataMap = new WeakMap();
 let contextMenuState = {
@@ -177,6 +183,10 @@ function getContextMenuElement() {
 
 function getAudioFilterButton() {
   return document.getElementById(AUDIO_FILTER_BUTTON_ID);
+}
+
+function getHistoryToggleButton() {
+  return document.getElementById(HISTORY_TOGGLE_BUTTON_ID);
 }
 
 function resetContextMenuState() {
@@ -698,6 +708,180 @@ function removeStoredGroupLabel(groupId) {
     delete groupLabels[key];
     persistGroupLabelsToStorage();
   }
+}
+
+function loadActivationHistoryFromStorage() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return [];
+  }
+
+  try {
+    const stored = window.localStorage.getItem(TAB_HISTORY_STORAGE_KEY);
+    if (!stored) {
+      return [];
+    }
+
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    const normalized = [];
+    const seen = new Set();
+
+    for (const entry of parsed) {
+      if (!entry || typeof entry !== 'object') {
+        continue;
+      }
+
+      const tabIdValue =
+        typeof entry.tabId !== 'undefined' ? entry.tabId : entry.id;
+      const activatedAtValue =
+        typeof entry.activatedAt !== 'undefined'
+          ? entry.activatedAt
+          : entry.timestamp;
+
+      const tabId = Number(tabIdValue);
+      const activatedAt = Number(activatedAtValue);
+
+      if (!Number.isFinite(tabId) || tabId < 0) {
+        continue;
+      }
+
+      if (!Number.isFinite(activatedAt)) {
+        continue;
+      }
+
+      const normalizedTabId = Math.trunc(tabId);
+      if (seen.has(normalizedTabId)) {
+        continue;
+      }
+
+      seen.add(normalizedTabId);
+      normalized.push({
+        tabId: normalizedTabId,
+        activatedAt: Math.trunc(activatedAt),
+      });
+    }
+
+    normalized.sort((a, b) => {
+      if (a.activatedAt === b.activatedAt) {
+        return a.tabId - b.tabId;
+      }
+      return b.activatedAt - a.activatedAt;
+    });
+
+    return normalized;
+  } catch (error) {
+    console.error('Failed to load activation history from storage:', error);
+    return [];
+  }
+}
+
+function persistActivationHistoryToStorage() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+
+  try {
+    const payload = Array.isArray(activationHistory)
+      ? activationHistory.map((entry) => ({
+          tabId: entry.tabId,
+          activatedAt: entry.activatedAt,
+        }))
+      : [];
+    window.localStorage.setItem(
+      TAB_HISTORY_STORAGE_KEY,
+      JSON.stringify(payload)
+    );
+  } catch (error) {
+    console.error('Failed to persist activation history:', error);
+  }
+}
+
+function recordTabActivation(tabId) {
+  if (!Number.isFinite(tabId) || tabId < 0) {
+    return;
+  }
+
+  const normalizedTabId = Math.trunc(tabId);
+  const timestamp = Math.floor(Date.now() / 1000);
+  if (!Array.isArray(activationHistory)) {
+    activationHistory = [];
+  }
+
+  let entry;
+  const existingIndex = activationHistory.findIndex(
+    (item) => item && item.tabId === normalizedTabId
+  );
+
+  if (existingIndex >= 0) {
+    entry = activationHistory.splice(existingIndex, 1)[0];
+    if (entry && typeof entry === 'object') {
+      entry.activatedAt = timestamp;
+    } else {
+      entry = { tabId: normalizedTabId, activatedAt: timestamp };
+    }
+  } else {
+    entry = { tabId: normalizedTabId, activatedAt: timestamp };
+  }
+
+  activationHistory.unshift(entry);
+  persistActivationHistoryToStorage();
+}
+
+function pruneActivationHistory(validTabIds) {
+  if (!Array.isArray(activationHistory)) {
+    activationHistory = [];
+    return;
+  }
+
+  if (!validTabIds || typeof validTabIds.size !== 'number') {
+    return;
+  }
+
+  const nextHistory = activationHistory.filter((entry) =>
+    entry && validTabIds.has(entry.tabId)
+  );
+
+  if (nextHistory.length !== activationHistory.length) {
+    activationHistory = nextHistory;
+    persistActivationHistoryToStorage();
+  }
+}
+
+function removeTabFromHistory(tabId) {
+  if (!Number.isFinite(tabId) || tabId < 0) {
+    return;
+  }
+
+  if (!Array.isArray(activationHistory) || activationHistory.length === 0) {
+    return;
+  }
+
+  const normalizedTabId = Math.trunc(tabId);
+  const nextHistory = activationHistory.filter(
+    (entry) => entry && entry.tabId !== normalizedTabId
+  );
+
+  if (nextHistory.length !== activationHistory.length) {
+    activationHistory = nextHistory;
+    persistActivationHistoryToStorage();
+  }
+}
+
+function getHistoryEntriesForOpenTabs() {
+  if (!Array.isArray(activationHistory) || activationHistory.length === 0) {
+    return [];
+  }
+
+  if (!(lastKnownOpenTabIds instanceof Set) || lastKnownOpenTabIds.size === 0) {
+    return activationHistory.slice();
+  }
+
+  return activationHistory.filter((entry) =>
+    entry && lastKnownOpenTabIds.has(entry.tabId)
+  );
 }
 
 function updateGroupExpansionStateFromStorage(storageValue) {
@@ -2142,6 +2326,139 @@ function setupOptionsControls() {
   applyOptionsViewState();
 }
 
+function sortTabsByHistory(tabs) {
+  if (!Array.isArray(tabs) || tabs.length === 0) {
+    return [];
+  }
+
+  const historyIndexMap = new Map();
+  if (Array.isArray(activationHistory)) {
+    activationHistory.forEach((entry, index) => {
+      if (entry && Number.isFinite(entry.tabId)) {
+        historyIndexMap.set(entry.tabId, {
+          activatedAt: Number.isFinite(entry.activatedAt)
+            ? entry.activatedAt
+            : 0,
+          index,
+        });
+      }
+    });
+  }
+
+  return [...tabs].sort((a, b) => {
+    const infoA = historyIndexMap.get(a?.id);
+    const infoB = historyIndexMap.get(b?.id);
+
+    if (infoA && infoB) {
+      if (infoA.activatedAt !== infoB.activatedAt) {
+        return infoB.activatedAt - infoA.activatedAt;
+      }
+      return infoA.index - infoB.index;
+    }
+
+    if (infoA) {
+      return -1;
+    }
+
+    if (infoB) {
+      return 1;
+    }
+
+    const lastAccessA = Number.isFinite(a?.lastAccessed) ? a.lastAccessed : 0;
+    const lastAccessB = Number.isFinite(b?.lastAccessed) ? b.lastAccessed : 0;
+
+    if (lastAccessA !== lastAccessB) {
+      return lastAccessB - lastAccessA;
+    }
+
+    const idA = Number.isFinite(a?.id) ? a.id : 0;
+    const idB = Number.isFinite(b?.id) ? b.id : 0;
+    return idA - idB;
+  });
+}
+
+function updateHistoryToggleButtonUI() {
+  const button = getHistoryToggleButton();
+  if (!button) {
+    return;
+  }
+
+  button.setAttribute('aria-pressed', historyViewEnabled ? 'true' : 'false');
+  button.classList.toggle('is-active', historyViewEnabled);
+}
+
+function toggleHistoryView(forceState) {
+  const nextState =
+    typeof forceState === 'boolean' ? forceState : !historyViewEnabled;
+
+  if (nextState === historyViewEnabled) {
+    updateHistoryToggleButtonUI();
+    return;
+  }
+
+  historyViewEnabled = nextState;
+
+  if (historyViewEnabled) {
+    if (domainGroupingMenuOpen) {
+      toggleDomainGroupingMenu(false);
+    }
+    if (optionsViewOpen) {
+      toggleOptionsView(false);
+    }
+  }
+
+  updateHistoryToggleButtonUI();
+  refreshTabs();
+}
+
+function setupHistoryControls() {
+  const toggleButton = getHistoryToggleButton();
+  if (toggleButton) {
+    updateHistoryToggleButtonUI();
+    toggleButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleHistoryView();
+    });
+  }
+}
+
+async function initializeHistoryState() {
+  activationHistory = loadActivationHistoryFromStorage();
+
+  if (!chrome?.tabs?.query) {
+    updateHistoryToggleButtonUI();
+    return;
+  }
+
+  try {
+    const tabs = await chrome.tabs.query({
+      active: true,
+      lastFocusedWindow: true,
+    });
+    if (Array.isArray(tabs) && tabs.length > 0) {
+      const [activeTab] = tabs;
+      if (activeTab && Number.isFinite(activeTab.id)) {
+        lastKnownActiveTabId = activeTab.id;
+      }
+    }
+  } catch (error) {
+    console.debug('Failed to determine initially active tab:', error);
+  }
+
+  updateHistoryToggleButtonUI();
+}
+
+function handleTabActivated(activeInfo) {
+  if (!activeInfo || !Number.isFinite(activeInfo.tabId)) {
+    return;
+  }
+
+  const normalizedTabId = Math.trunc(activeInfo.tabId);
+  lastKnownActiveTabId = normalizedTabId;
+  recordTabActivation(normalizedTabId);
+}
+
 async function initializePreviewState() {
   try {
     const stored = await chrome.storage.local.get({
@@ -2184,22 +2501,41 @@ async function refreshTabs() {
     return;
   }
 
-  const tabIdsForQueue = [];
+  if (!Array.isArray(tabs)) {
+    tabs = [];
+  }
 
-  if (audioFilterEnabled) {
+  const openTabIds = new Set();
+  for (const tab of tabs) {
+    if (Number.isFinite(tab?.id)) {
+      openTabIds.add(Math.trunc(tab.id));
+    }
+  }
+
+  lastKnownOpenTabIds = openTabIds;
+  pruneActivationHistory(openTabIds);
+
+  const filteredTabs = audioFilterEnabled
+    ? tabs.filter((tab) => {
+        const isAudible = Boolean(tab?.audible);
+        const isMuted = Boolean(tab?.mutedInfo && tab.mutedInfo.muted);
+        return isAudible || isMuted;
+      })
+    : tabs.slice();
+
+  const tabIdsForQueue = [];
+  const enqueueTabId = (tab) => {
+    if (Number.isFinite(tab?.id)) {
+      tabIdsForQueue.push(tab.id);
+    }
+  };
+
+  if (historyViewEnabled) {
+    const orderedTabs = sortTabsByHistory(filteredTabs);
     const fragment = document.createDocumentFragment();
 
-    for (const tab of tabs) {
-      const isAudible = Boolean(tab?.audible);
-      const isMuted = Boolean(tab?.mutedInfo && tab.mutedInfo.muted);
-      if (!isAudible && !isMuted) {
-        continue;
-      }
-
-      if (typeof tab.id === 'number') {
-        tabIdsForQueue.push(tab.id);
-      }
-
+    for (const tab of orderedTabs) {
+      enqueueTabId(tab);
       fragment.appendChild(createTabListItem(tab));
     }
 
@@ -2213,19 +2549,37 @@ async function refreshTabs() {
     if (scrollPersistenceSuspended || !hasRestoredScrollPosition) {
       restoreScrollPositionFromStorage();
     }
+    return;
+  }
 
+  if (audioFilterEnabled) {
+    const fragment = document.createDocumentFragment();
+
+    for (const tab of filteredTabs) {
+      enqueueTabId(tab);
+      fragment.appendChild(createTabListItem(tab));
+    }
+
+    if (requestId !== refreshTabsRequestId) {
+      return;
+    }
+
+    list.replaceChildren(fragment);
+    syncPreviewQueue(tabIdsForQueue);
+
+    if (scrollPersistenceSuspended || !hasRestoredScrollPosition) {
+      restoreScrollPositionFromStorage();
+    }
     return;
   }
 
   const groupMap = new Map();
   const structure = [];
 
-  for (const tab of tabs) {
-    if (typeof tab.id === 'number') {
-      tabIdsForQueue.push(tab.id);
-    }
+  for (const tab of filteredTabs) {
+    enqueueTabId(tab);
 
-    if (typeof tab.groupId === 'number' && tab.groupId >= 0) {
+    if (Number.isFinite(tab?.groupId) && tab.groupId >= 0) {
       let groupEntry = groupMap.get(tab.groupId);
       if (!groupEntry) {
         groupEntry = { tabs: [], info: null };
@@ -2301,20 +2655,39 @@ function attachEventListeners() {
     closeButton.addEventListener('click', notifyPanelClosed);
   }
 
-  chrome.tabs.onActivated.addListener(refreshTabs);
-  chrome.tabs.onCreated.addListener(refreshTabs);
-  chrome.tabs.onRemoved.addListener(refreshTabs);
-  chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (
-      changeInfo.status === 'complete' ||
-      changeInfo.title ||
-      changeInfo.url ||
-      typeof changeInfo.audible === 'boolean' ||
-      (changeInfo.mutedInfo && typeof changeInfo.mutedInfo.muted === 'boolean')
-    ) {
+  if (chrome?.tabs?.onActivated) {
+    chrome.tabs.onActivated.addListener((activeInfo) => {
+      handleTabActivated(activeInfo);
       refreshTabs();
-    }
-  });
+    });
+  }
+
+  if (chrome?.tabs?.onCreated) {
+    chrome.tabs.onCreated.addListener(() => {
+      refreshTabs();
+    });
+  }
+
+  if (chrome?.tabs?.onRemoved) {
+    chrome.tabs.onRemoved.addListener((tabId) => {
+      removeTabFromHistory(tabId);
+      refreshTabs();
+    });
+  }
+
+  if (chrome?.tabs?.onUpdated) {
+    chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+      if (
+        changeInfo.status === 'complete' ||
+        changeInfo.title ||
+        changeInfo.url ||
+        typeof changeInfo.audible === 'boolean' ||
+        (changeInfo.mutedInfo && typeof changeInfo.mutedInfo.muted === 'boolean')
+      ) {
+        refreshTabs();
+      }
+    });
+  }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -2322,6 +2695,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupDomainGroupingControls();
   setupAudioFilterControls();
   setupOptionsControls();
+  await initializeHistoryState();
+  setupHistoryControls();
   await initializeGroupExpansionState();
   setupScrollPersistence();
   setupPanelContextMenu();
