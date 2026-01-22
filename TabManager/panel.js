@@ -158,15 +158,6 @@ function getTabListElement() {
   return document.getElementById('tab-list');
 }
 
-function notifyPanelClosed() {
-  window.parent.postMessage({ type: 'TabManagerClosePanel' }, '*');
-  chrome.runtime
-    .sendMessage({ type: 'TabManagerPanelClosedByUser' })
-    .catch((error) => {
-      console.error('Failed to notify background about panel close:', error);
-    });
-}
-
 function postToParentMessage(type, detail = {}) {
   if (window.parent && window.parent !== window) {
     try {
@@ -2649,12 +2640,6 @@ async function refreshTabs() {
 }
 
 function attachEventListeners() {
-  const closeButton = document.getElementById('close-btn');
-
-  if (closeButton) {
-    closeButton.addEventListener('click', notifyPanelClosed);
-  }
-
   if (chrome?.tabs?.onActivated) {
     chrome.tabs.onActivated.addListener((activeInfo) => {
       handleTabActivated(activeInfo);
