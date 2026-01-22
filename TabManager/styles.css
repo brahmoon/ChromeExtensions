@@ -90,26 +90,6 @@ header.is-compact {
   font-family: system-ui;
 }
 
-#close-btn,
-#close-btn:focus {
-  outline: none;
-}
-
-#close-btn {
-  background: none;
-  border: none;
-  color: var(--tm-text-primary);
-  font-size: 20px;
-  cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 4px;
-  transition: background 0.2s ease-out;
-}
-
-#close-btn:hover {
-  background-color: var(--tm-soft-overlay);
-}
-
 .header-icon-button {
   background: none;
   border: none;
