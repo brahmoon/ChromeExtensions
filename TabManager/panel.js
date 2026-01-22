@@ -16,6 +16,7 @@ const DOMAIN_GROUP_BUTTON_ID = 'domain-group-btn';
 const DOMAIN_GROUP_MENU_ID = 'domain-group-menu';
 const DOMAIN_GROUP_CONTAINER_ID = 'domain-group-container';
 const HISTORY_TOGGLE_BUTTON_ID = 'history-toggle-btn';
+const SEARCH_INPUT_ID = 'tab-search-input';
 const DOMAIN_GROUP_SCOPE_CURRENT = 'current';
 const DOMAIN_GROUP_SCOPE_ALL = 'all';
 const TAB_VIEW_ID = 'tab-view';
@@ -144,6 +145,7 @@ let scrollPersistenceSuspended = false;
 let refreshTabsRequestId = 0;
 let audioFilterEnabled = false;
 let historyViewEnabled = false;
+let searchQuery = '';
 let activationHistory = loadActivationHistoryFromStorage();
 let lastKnownActiveTabId = null;
 let lastKnownOpenTabIds = new Set();
@@ -156,15 +158,6 @@ let contextMenuState = {
 
 function getTabListElement() {
   return document.getElementById('tab-list');
-}
-
-function notifyPanelClosed() {
-  window.parent.postMessage({ type: 'TabManagerClosePanel' }, '*');
-  chrome.runtime
-    .sendMessage({ type: 'TabManagerPanelClosedByUser' })
-    .catch((error) => {
-      console.error('Failed to notify background about panel close:', error);
-    });
 }
 
 function postToParentMessage(type, detail = {}) {
@@ -187,6 +180,10 @@ function getAudioFilterButton() {
 
 function getHistoryToggleButton() {
   return document.getElementById(HISTORY_TOGGLE_BUTTON_ID);
+}
+
+function getSearchInput() {
+  return document.getElementById(SEARCH_INPUT_ID);
 }
 
 function resetContextMenuState() {
@@ -2411,6 +2408,37 @@ function toggleHistoryView(forceState) {
   refreshTabs();
 }
 
+function normalizeSearchQuery(value) {
+  return value.trim().toLowerCase();
+}
+
+function matchesSearch(tab) {
+  if (!searchQuery) {
+    return true;
+  }
+
+  const title = typeof tab?.title === 'string' ? tab.title.toLowerCase() : '';
+  return title.includes(searchQuery);
+}
+
+function setupSearchControls() {
+  const input = getSearchInput();
+  if (!input) {
+    return;
+  }
+
+  searchQuery = normalizeSearchQuery(input.value);
+
+  input.addEventListener('input', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+    searchQuery = normalizeSearchQuery(target.value);
+    refreshTabs();
+  });
+}
+
 function setupHistoryControls() {
   const toggleButton = getHistoryToggleButton();
   if (toggleButton) {
@@ -2523,6 +2551,8 @@ async function refreshTabs() {
       })
     : tabs.slice();
 
+  const searchFilteredTabs = filteredTabs.filter((tab) => matchesSearch(tab));
+
   const tabIdsForQueue = [];
   const enqueueTabId = (tab) => {
     if (Number.isFinite(tab?.id)) {
@@ -2531,7 +2561,7 @@ async function refreshTabs() {
   };
 
   if (historyViewEnabled) {
-    const orderedTabs = sortTabsByHistory(filteredTabs);
+    const orderedTabs = sortTabsByHistory(searchFilteredTabs);
     const fragment = document.createDocumentFragment();
 
     for (const tab of orderedTabs) {
@@ -2555,7 +2585,7 @@ async function refreshTabs() {
   if (audioFilterEnabled) {
     const fragment = document.createDocumentFragment();
 
-    for (const tab of filteredTabs) {
+    for (const tab of searchFilteredTabs) {
       enqueueTabId(tab);
       fragment.appendChild(createTabListItem(tab));
     }
@@ -2576,7 +2606,7 @@ async function refreshTabs() {
   const groupMap = new Map();
   const structure = [];
 
-  for (const tab of filteredTabs) {
+  for (const tab of searchFilteredTabs) {
     enqueueTabId(tab);
 
     if (Number.isFinite(tab?.groupId) && tab.groupId >= 0) {
@@ -2649,12 +2679,6 @@ async function refreshTabs() {
 }
 
 function attachEventListeners() {
-  const closeButton = document.getElementById('close-btn');
-
-  if (closeButton) {
-    closeButton.addEventListener('click', notifyPanelClosed);
-  }
-
   if (chrome?.tabs?.onActivated) {
     chrome.tabs.onActivated.addListener((activeInfo) => {
       handleTabActivated(activeInfo);
@@ -2695,6 +2719,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupDomainGroupingControls();
   setupAudioFilterControls();
   setupOptionsControls();
+  setupSearchControls();
   await initializeHistoryState();
   setupHistoryControls();
   await initializeGroupExpansionState();
