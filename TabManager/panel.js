@@ -17,6 +17,7 @@ const DOMAIN_GROUP_MENU_ID = 'domain-group-menu';
 const DOMAIN_GROUP_CONTAINER_ID = 'domain-group-container';
 const HISTORY_TOGGLE_BUTTON_ID = 'history-toggle-btn';
 const SEARCH_INPUT_ID = 'tab-search-input';
+const CLOSE_BUTTON_ID = 'close-btn';
 const DOMAIN_GROUP_SCOPE_CURRENT = 'current';
 const DOMAIN_GROUP_SCOPE_ALL = 'all';
 const TAB_VIEW_ID = 'tab-view';
@@ -34,6 +35,7 @@ const GROUP_LABELS_STORAGE_KEY = 'tabManagerGroupLabels';
 const GROUP_EXPANSION_STORAGE_KEY = 'tabManagerGroupExpansionState';
 const SCROLL_POSITION_STORAGE_KEY = 'tabManagerScrollPosition';
 const TAB_HISTORY_STORAGE_KEY = 'tabManagerActivationHistory';
+const SEARCH_STORAGE_KEY = 'tabManagerSearchQuery';
 const PREVIEW_DEFAULT_MESSAGE = 'タブをホバーしてプレビューを表示';
 const PREVIEW_DISABLED_MESSAGE = '設定画面からプレビューを有効にしてください';
 const PREVIEW_UNAVAILABLE_MESSAGE = 'このタブのプレビュー画像は利用できません';
@@ -186,6 +188,10 @@ function getSearchInput() {
   return document.getElementById(SEARCH_INPUT_ID);
 }
 
+function getCloseButton() {
+  return document.getElementById(CLOSE_BUTTON_ID);
+}
+
 function resetContextMenuState() {
   contextMenuState = {
     type: null,
@@ -230,6 +236,15 @@ function toggleAudioFilter(forceState) {
   audioFilterEnabled = nextState;
   updateAudioFilterButtonUI();
   refreshTabs();
+}
+
+function notifyPanelClosed() {
+  window.parent.postMessage({ type: 'TabManagerClosePanel' }, '*');
+  chrome.runtime
+    .sendMessage({ type: 'TabManagerPanelClosedByUser' })
+    .catch((error) => {
+      console.error('Failed to notify background about panel close:', error);
+    });
 }
 
 function resolveTabContext(target) {
@@ -2427,15 +2442,41 @@ function setupSearchControls() {
     return;
   }
 
-  searchQuery = normalizeSearchQuery(input.value);
+  chrome.storage.local
+    .get({ [SEARCH_STORAGE_KEY]: '' })
+    .then((result) => {
+      const storedValue =
+        result && typeof result[SEARCH_STORAGE_KEY] === 'string'
+          ? result[SEARCH_STORAGE_KEY]
+          : '';
+      input.value = storedValue;
+      searchQuery = normalizeSearchQuery(storedValue);
+      refreshTabs();
+    })
+    .catch(() => {});
 
   input.addEventListener('input', (event) => {
     const target = event.target;
     if (!(target instanceof HTMLInputElement)) {
       return;
     }
-    searchQuery = normalizeSearchQuery(target.value);
+    const value = target.value;
+    searchQuery = normalizeSearchQuery(value);
+    chrome.storage.local.set({ [SEARCH_STORAGE_KEY]: value }).catch(() => {});
     refreshTabs();
+  });
+}
+
+function setupCloseButton() {
+  const closeButton = getCloseButton();
+  if (!closeButton) {
+    return;
+  }
+
+  closeButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    notifyPanelClosed();
   });
 }
 
@@ -2720,6 +2761,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupAudioFilterControls();
   setupOptionsControls();
   setupSearchControls();
+  setupCloseButton();
   await initializeHistoryState();
   setupHistoryControls();
   await initializeGroupExpansionState();

@@ -110,10 +110,6 @@ header.is-compact {
   position: relative;
 }
 
-#ext-title {
-  font-family: system-ui;
-}
-
 .header-icon-button {
   background: none;
   border: none;
@@ -123,6 +119,10 @@ header.is-compact {
   padding: 4px 6px;
   border-radius: 4px;
   transition: background 0.2s ease-out;
+}
+
+.header-icon-button--close {
+  font-size: 20px;
 }
 
 .header-icon-button[aria-expanded='true'] {
@@ -496,6 +496,7 @@ header.is-compact {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  margin-left: 10px;
 }
 
 .tab-favicon--placeholder {
