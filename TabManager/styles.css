@@ -82,6 +82,30 @@ header.is-compact {
   gap: 6px;
 }
 
+.header-search {
+  display: flex;
+  align-items: center;
+}
+
+.header-search input {
+  background-color: var(--tm-button-bg);
+  color: var(--tm-text-primary);
+  border: 1px solid var(--tm-button-border);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  min-width: 160px;
+}
+
+.header-search input::placeholder {
+  color: var(--tm-text-muted);
+}
+
+.header-search input:focus {
+  outline: 2px solid var(--tm-accent);
+  outline-offset: 1px;
+}
+
 .header-action-group {
   position: relative;
 }
