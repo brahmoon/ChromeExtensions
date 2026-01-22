@@ -9,8 +9,15 @@
   <div class="panel-shell">
     <header>
       <div class="header-left">
-        <h2 id="ext-title">Tab Manager</h2>
         <div class="header-actions">
+          <div class="header-search">
+            <input
+              id="tab-search-input"
+              type="search"
+              placeholder="タブを検索"
+              aria-label="タブを検索"
+            />
+          </div>
           <button
             id="audio-filter-btn"
             class="header-icon-button"
@@ -66,9 +73,15 @@
             aria-expanded="false"
             aria-controls="options-view"
           >⚙</button>
+          <button
+            id="close-btn"
+            class="header-icon-button header-icon-button--close"
+            type="button"
+            title="閉じる"
+            aria-label="閉じる"
+          >×</button>
         </div>
       </div>
-      <button id="close-btn">&gt;</button>
     </header>
     <div id="panel-content">
       <section id="tab-view" class="panel-view" aria-labelledby="tab-view-heading">
