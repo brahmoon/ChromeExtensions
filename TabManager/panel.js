@@ -515,7 +515,7 @@ async function popUpTabsAsWindow(tabs) {
     const newWindow = await chrome.windows.create({
       tabId: firstTabId,
       focused: true,
-      type: 'popup',
+      type: 'normal',
     });
 
     if (rest.length > 0 && Number.isFinite(newWindow?.id) && chrome.tabs?.move) {
