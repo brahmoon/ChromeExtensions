@@ -3,6 +3,7 @@ const PANEL_WIDTH = 400;
 const PANEL_RAIL_WIDTH = 44;
 const PANEL_RAIL_ID = 'tab-manager-rail';
 const PANEL_RAIL_BUTTON_ID = 'tab-manager-rail-button';
+const PANEL_LAYOUT_WRAPPER_ID = 'tab-manager-layout-wrapper';
 const PREVIEW_OVERLAY_ID = 'tab-manager-preview-overlay';
 const PREVIEW_OVERLAY_MIN_HEIGHT = 180;
 const PREVIEW_OVERLAY_TRANSITION_MS = 180;
@@ -273,8 +274,8 @@ function createPanelElement() {
   iframe.style.cssText = `
     position: fixed;
     top: 0;
-    right: ${PANEL_RAIL_WIDTH}px;
-    width: ${PANEL_WIDTH}px;
+    right: 0;
+    width: ${PANEL_WIDTH + PANEL_RAIL_WIDTH}px;
     height: 100%;
     z-index: 999999;
     border: none;
@@ -297,16 +298,47 @@ function ensurePanelRail() {
     return existing;
   }
 
+  const body = document.body || document.documentElement;
+  if (!body) {
+    return null;
+  }
+
+  const layoutWrapper = document.createElement('div');
+  layoutWrapper.id = PANEL_LAYOUT_WRAPPER_ID;
+  layoutWrapper.setAttribute(EXTENSION_ELEMENT_ATTRIBUTE, '');
+  layoutWrapper.style.cssText = `
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 100vh;
+  `;
+
+  const children = Array.from(body.childNodes);
+  children.forEach((node) => {
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      layoutWrapper.appendChild(node);
+      return;
+    }
+
+    const element = node;
+    if (element.hasAttribute(EXTENSION_ELEMENT_ATTRIBUTE)) {
+      return;
+    }
+    layoutWrapper.appendChild(node);
+  });
+
+  body.style.display = 'flex';
+  body.style.alignItems = 'stretch';
+  body.style.margin = '0';
+  body.appendChild(layoutWrapper);
+
   const rail = document.createElement('div');
   rail.id = PANEL_RAIL_ID;
   rail.setAttribute(EXTENSION_ELEMENT_ATTRIBUTE, '');
   rail.style.cssText = `
-    position: fixed;
-    top: 0;
-    right: 0;
+    position: relative;
     width: ${PANEL_RAIL_WIDTH}px;
-    height: 100%;
-    z-index: 999998;
+    min-height: 100vh;
+    flex: 0 0 ${PANEL_RAIL_WIDTH}px;
     display: flex;
     align-items: flex-start;
     justify-content: center;
@@ -347,15 +379,7 @@ function ensurePanelRail() {
   rail.addEventListener('touchmove', preventScroll, { passive: false });
 
   rail.appendChild(button);
-  (document.body || document.documentElement).appendChild(rail);
-
-  const root = document.documentElement;
-  if (root) {
-    root.style.paddingRight = `${PANEL_RAIL_WIDTH}px`;
-  }
-  if (document.body) {
-    document.body.style.paddingRight = `${PANEL_RAIL_WIDTH}px`;
-  }
+  body.appendChild(rail);
 
   return rail;
 }
