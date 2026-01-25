@@ -1,0 +1,10 @@
+.greeting-checkbox {
+  display: inline-block;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+.greeting-checkbox input {
+  cursor: pointer;
+  transform: scale(1.2);
+}
