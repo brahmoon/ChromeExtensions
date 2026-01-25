@@ -278,6 +278,13 @@ function createPanelElement() {
     box-shadow: -3px 0 8px rgba(0,0,0,0.3);
     transform: translateX(0);
   `;
+
+  const preventScroll = (event) => {
+    event.preventDefault();
+  };
+
+  iframe.addEventListener('wheel', preventScroll, { passive: false });
+  iframe.addEventListener('touchmove', preventScroll, { passive: false });
   return iframe;
 }
 
