@@ -861,7 +861,8 @@ function extractDomainForGrouping(url) {
       return null;
     }
 
-    return parsed.hostname.toLowerCase();
+    const hostname = parsed.hostname.toLowerCase();
+    return hostname.replace(/^www\./, '');
   } catch (error) {
     return null;
   }
@@ -1134,4 +1135,3 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 });
-

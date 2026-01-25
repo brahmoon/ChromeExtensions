@@ -538,11 +538,44 @@ header.is-compact {
   justify-content: center;
 }
 
+.tab-audio-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.tab-bookmark-btn {
+  background: none;
+  border: none;
+  color: var(--tm-icon-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: color 0.2s ease, background-color 0.2s ease;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tab-bookmark-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
 .tab-item:hover .tab-audio-btn {
   color: var(--tm-text-primary);
 }
 
+.tab-item:hover .tab-bookmark-btn {
+  color: var(--tm-text-primary);
+}
+
 .tab-audio-btn:hover {
+  background-color: var(--tm-overlay);
+  color: var(--tm-text-primary);
+}
+
+.tab-bookmark-btn:hover {
   background-color: var(--tm-overlay);
   color: var(--tm-text-primary);
 }
@@ -555,12 +588,19 @@ header.is-compact {
   background: none;
   border: none;
   color: var(--tm-icon-muted);
-  font-size: 14px;
   cursor: pointer;
   padding: 4px;
   border-radius: 4px;
   transition: color 0.2s ease, background-color 0.2s ease;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tab-close-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 .tab-item:hover .tab-close-btn {

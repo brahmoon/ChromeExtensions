@@ -1387,7 +1387,8 @@ function updateAudioButtonState(button, { audible, muted }) {
   button.dataset.audible = nextAudible ? 'true' : 'false';
 
   const label = nextMuted ? 'タブのミュートを解除' : 'タブをミュート';
-  button.textContent = nextMuted ? '🔇' : '🔊';
+  const audioIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M5 13h2.83L10 15.17V8.83L7.83 11H5z" opacity="0.3"/><path fill="currentColor" d="M3 9v6h4l5 5V4L7 9zm7-.17v6.34L7.83 13H5v-2h2.83zm4-.86v8.05c1.48-.73 2.5-2.25 2.5-4.02A4.5 4.5 0 0 0 14 7.97m0-4.74v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77\"/></svg>`;
+  button.innerHTML = nextMuted ? '🔇' : audioIcon;
   button.title = label;
   button.setAttribute('aria-label', label);
 }
@@ -1428,6 +1429,89 @@ function createAudioButton(tab) {
       }
     });
   }
+
+  return button;
+}
+
+function setBookmarkButtonState(button, isBookmarked) {
+  if (!button) {
+    return;
+  }
+
+  const icon = isBookmarked
+    ? `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3l7 3V5c0-1.1-.9-2-2-2"/></svg>`
+    : `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3l7 3V5c0-1.1-.9-2-2-2m0 15l-5-2.18L7 18V5h10z"/></svg>`;
+
+  button.innerHTML = icon;
+  button.dataset.bookmarked = isBookmarked ? 'true' : 'false';
+  button.title = isBookmarked ? 'ブックマークを解除' : 'ブックマークに追加';
+  button.setAttribute('aria-label', button.title);
+}
+
+async function resolveBookmarkNode(url) {
+  if (!chrome.bookmarks?.search || typeof url !== 'string' || url.length === 0) {
+    return null;
+  }
+
+  try {
+    const results = await chrome.bookmarks.search({ url });
+    if (Array.isArray(results) && results.length > 0) {
+      return results[0];
+    }
+  } catch (error) {
+    console.debug('Failed to resolve bookmark status:', error);
+  }
+
+  return null;
+}
+
+async function toggleBookmarkForTab(tab, button) {
+  if (!tab || !chrome.bookmarks) {
+    return;
+  }
+
+  const url = typeof tab.url === 'string' && tab.url.length > 0 ? tab.url : tab.pendingUrl;
+  if (typeof url !== 'string' || url.length === 0) {
+    return;
+  }
+
+  try {
+    const existing = await resolveBookmarkNode(url);
+    if (existing) {
+      if (chrome.bookmarks.remove) {
+        await chrome.bookmarks.remove(existing.id);
+        setBookmarkButtonState(button, false);
+      }
+      return;
+    }
+
+    if (chrome.bookmarks.create) {
+      await chrome.bookmarks.create({ title: tab.title || url, url });
+      setBookmarkButtonState(button, true);
+    }
+  } catch (error) {
+    console.error('Failed to toggle bookmark:', error);
+  }
+}
+
+function createBookmarkButton(tab) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'tab-bookmark-btn';
+  setBookmarkButtonState(button, false);
+
+  const url = typeof tab?.url === 'string' && tab.url.length > 0 ? tab.url : tab?.pendingUrl;
+  resolveBookmarkNode(url)
+    .then((existing) => {
+      setBookmarkButtonState(button, Boolean(existing));
+    })
+    .catch(() => {});
+
+  button.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    await toggleBookmarkForTab(tab, button);
+  });
 
   return button;
 }
@@ -1631,6 +1715,14 @@ function createTabListItem(tab) {
   }
 
   const favicon = createFaviconElement(tab);
+  favicon.addEventListener('mouseenter', () => {
+    handleTabHover(tab);
+  });
+  favicon.addEventListener('mouseleave', () => {
+    if (typeof tab.id === 'number') {
+      handleTabLeave(tab.id);
+    }
+  });
 
   const fullTitle = tab.title || '(no title)';
 
@@ -1642,7 +1734,7 @@ function createTabListItem(tab) {
   const closeButton = document.createElement('button');
   closeButton.className = 'tab-close-btn';
   closeButton.type = 'button';
-  closeButton.textContent = '✕';
+  closeButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12z"/></svg>`;
   closeButton.title = 'タブを閉じる';
   closeButton.addEventListener('click', async (event) => {
     event.stopPropagation();
@@ -1668,22 +1760,14 @@ function createTabListItem(tab) {
   });
 
   const audioButton = createAudioButton(tab);
+  const bookmarkButton = createBookmarkButton(tab);
 
   li.appendChild(favicon);
   li.appendChild(content);
   li.appendChild(audioButton);
+  li.appendChild(bookmarkButton);
   li.appendChild(closeButton);
   li.title = fullTitle;
-
-  li.addEventListener('mouseenter', () => {
-    handleTabHover(tab);
-  });
-
-  li.addEventListener('mouseleave', () => {
-    if (typeof tab.id === 'number') {
-      handleTabLeave(tab.id);
-    }
-  });
 
   li.addEventListener('click', async () => {
     try {
