@@ -188,6 +188,23 @@ header.is-compact {
   outline: none;
 }
 
+.header-dropdown__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  font-size: 14px;
+  color: var(--tm-text-primary);
+  cursor: pointer;
+}
+
+.header-dropdown__toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--tm-accent);
+}
+
 #panel-content {
   flex: 1;
   min-height: 0;

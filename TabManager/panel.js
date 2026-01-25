@@ -28,6 +28,8 @@ const CONTEXT_MENU_ID = 'context-menu';
 const CONTEXT_MENU_ITEM_CLASS = 'context-menu__item';
 const CONTEXT_TARGET_TYPE_TAB = 'tab';
 const CONTEXT_TARGET_TYPE_GROUP = 'group';
+const AUTO_DOMAIN_GROUP_STORAGE_KEY = 'tabManagerAutoDomainGrouping';
+const DOMAIN_GROUP_AUTO_TOGGLE_ID = 'domain-group-auto-toggle';
 const THEME_STORAGE_KEY = 'tabManagerTheme';
 const THEME_SELECT_ID = 'theme-select';
 const DEFAULT_THEME_ID = 'slate';
@@ -1388,7 +1390,8 @@ function updateAudioButtonState(button, { audible, muted }) {
 
   const label = nextMuted ? 'タブのミュートを解除' : 'タブをミュート';
   const audioIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M5 13h2.83L10 15.17V8.83L7.83 11H5z" opacity="0.3"/><path fill="currentColor" d="M3 9v6h4l5 5V4L7 9zm7-.17v6.34L7.83 13H5v-2h2.83zm4-.86v8.05c1.48-.73 2.5-2.25 2.5-4.02A4.5 4.5 0 0 0 14 7.97m0-4.74v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77\"/></svg>`;
-  button.innerHTML = nextMuted ? '🔇' : audioIcon;
+  const mutedIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M4.34 2.93L2.93 4.34L7.29 8.7L7 9H3v6h4l5 5v-6.59l4.18 4.18c-.65.49-1.38.88-2.18 1.11v2.06a8.94 8.94 0 0 0 3.61-1.75l2.05 2.05l1.41-1.41zM10 15.17L7.83 13H5v-2h2.83l.88-.88L10 11.41zM19 12c0 .82-.15 1.61-.41 2.34l1.53 1.53c.56-1.17.88-2.48.88-3.87c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71m-7-8l-1.88 1.88L12 7.76zm4.5 8A4.5 4.5 0 0 0 14 7.97v1.79l2.48 2.48c.01-.08.02-.16.02-.24\"/></svg>`;
+  button.innerHTML = nextMuted ? mutedIcon : audioIcon;
   button.title = label;
   button.setAttribute('aria-label', label);
 }
@@ -1465,6 +1468,74 @@ async function resolveBookmarkNode(url) {
   return null;
 }
 
+function extractBookmarkDomain(url) {
+  if (typeof url !== 'string' || url.length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname) {
+      return null;
+    }
+    return parsed.hostname.toLowerCase().replace(/^www\./, '');
+  } catch (error) {
+    return null;
+  }
+}
+
+async function resolveBookmarksBarId() {
+  if (!chrome.bookmarks?.getTree) {
+    return null;
+  }
+
+  try {
+    const roots = await chrome.bookmarks.getTree();
+    const root = Array.isArray(roots) ? roots[0] : null;
+    const bar = root?.children?.[0];
+    return bar?.id || null;
+  } catch (error) {
+    console.debug('Failed to resolve bookmarks bar:', error);
+  }
+
+  return null;
+}
+
+async function ensureDomainBookmarkFolder(domain) {
+  if (!chrome.bookmarks) {
+    return null;
+  }
+
+  if (typeof domain !== 'string' || domain.length === 0) {
+    return null;
+  }
+
+  try {
+    const results = await chrome.bookmarks.search({ title: domain });
+    if (Array.isArray(results)) {
+      const folder = results.find((item) => !item.url);
+      if (folder?.id) {
+        return folder.id;
+      }
+    }
+  } catch (error) {
+    console.debug('Failed to search bookmark folders:', error);
+  }
+
+  const barId = await resolveBookmarksBarId();
+  if (!barId || !chrome.bookmarks.create) {
+    return null;
+  }
+
+  try {
+    const folder = await chrome.bookmarks.create({ title: domain, parentId: barId });
+    return folder?.id || null;
+  } catch (error) {
+    console.debug('Failed to create domain folder:', error);
+    return null;
+  }
+}
+
 async function toggleBookmarkForTab(tab, button) {
   if (!tab || !chrome.bookmarks) {
     return;
@@ -1486,7 +1557,13 @@ async function toggleBookmarkForTab(tab, button) {
     }
 
     if (chrome.bookmarks.create) {
-      await chrome.bookmarks.create({ title: tab.title || url, url });
+      const domain = extractBookmarkDomain(url);
+      const parentId = domain ? await ensureDomainBookmarkFolder(domain) : null;
+      await chrome.bookmarks.create({
+        title: tab.title || url,
+        url,
+        parentId: parentId || undefined,
+      });
       setBookmarkButtonState(button, true);
     }
   } catch (error) {
@@ -2194,6 +2271,10 @@ function getDomainGroupingContainer() {
   return document.getElementById(DOMAIN_GROUP_CONTAINER_ID);
 }
 
+function getDomainGroupingAutoToggle() {
+  return document.getElementById(DOMAIN_GROUP_AUTO_TOGGLE_ID);
+}
+
 function positionDomainGroupingMenu() {
   const menu = getDomainGroupingMenu();
   const container = getDomainGroupingContainer();
@@ -2320,6 +2401,22 @@ function setupDomainGroupingControls() {
 
   if (!container || !button || !menu) {
     return;
+  }
+
+  const autoToggle = getDomainGroupingAutoToggle();
+  if (autoToggle) {
+    chrome.storage.local
+      .get({ [AUTO_DOMAIN_GROUP_STORAGE_KEY]: false })
+      .then((result) => {
+        autoToggle.checked = Boolean(result[AUTO_DOMAIN_GROUP_STORAGE_KEY]);
+      })
+      .catch(() => {});
+
+    autoToggle.addEventListener('change', () => {
+      chrome.storage.local
+        .set({ [AUTO_DOMAIN_GROUP_STORAGE_KEY]: autoToggle.checked })
+        .catch(() => {});
+    });
   }
 
   button.addEventListener('click', (event) => {

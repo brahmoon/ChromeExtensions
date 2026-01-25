@@ -1,5 +1,8 @@
 const PANEL_ID = 'tab-manager-panel';
 const PANEL_WIDTH = 400;
+const PANEL_RAIL_WIDTH = 44;
+const PANEL_RAIL_ID = 'tab-manager-rail';
+const PANEL_RAIL_BUTTON_ID = 'tab-manager-rail-button';
 const PREVIEW_OVERLAY_ID = 'tab-manager-preview-overlay';
 const PREVIEW_OVERLAY_MIN_HEIGHT = 180;
 const PREVIEW_OVERLAY_TRANSITION_MS = 180;
@@ -35,7 +38,7 @@ function ensurePreviewOverlayElements() {
     position: fixed;
     top: 0;
     left: 0;
-    right: ${PANEL_WIDTH}px;
+    right: ${PANEL_WIDTH + PANEL_RAIL_WIDTH}px;
     bottom: 0;
     z-index: 999998;
     pointer-events: none;
@@ -270,7 +273,7 @@ function createPanelElement() {
   iframe.style.cssText = `
     position: fixed;
     top: 0;
-    right: 0;
+    right: ${PANEL_RAIL_WIDTH}px;
     width: ${PANEL_WIDTH}px;
     height: 100%;
     z-index: 999999;
@@ -288,11 +291,81 @@ function createPanelElement() {
   return iframe;
 }
 
+function ensurePanelRail() {
+  const existing = document.getElementById(PANEL_RAIL_ID);
+  if (existing) {
+    return existing;
+  }
+
+  const rail = document.createElement('div');
+  rail.id = PANEL_RAIL_ID;
+  rail.setAttribute(EXTENSION_ELEMENT_ATTRIBUTE, '');
+  rail.style.cssText = `
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: ${PANEL_RAIL_WIDTH}px;
+    height: 100%;
+    z-index: 999998;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 12px 0;
+    box-sizing: border-box;
+    background: rgba(32, 33, 36, 0.12);
+    backdrop-filter: blur(6px);
+  `;
+
+  const button = document.createElement('button');
+  button.id = PANEL_RAIL_BUTTON_ID;
+  button.type = 'button';
+  button.setAttribute(EXTENSION_ELEMENT_ATTRIBUTE, '');
+  button.style.cssText = `
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: rgba(32, 33, 36, 0.6);
+    color: #e8eaed;
+    border-radius: 6px;
+    cursor: pointer;
+  `;
+  button.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M18.29 17.29a.996.996 0 0 0 0-1.41L14.42 12l3.88-3.88a.996.996 0 1 0-1.41-1.41L12.3 11.3a.996.996 0 0 0 0 1.41l4.59 4.59c.38.38 1.01.38 1.4-.01"/><path fill="currentColor" d="M11.7 17.29a.996.996 0 0 0 0-1.41L7.83 12l3.88-3.88a.996.996 0 1 0-1.41-1.41L5.71 11.3a.996.996 0 0 0 0 1.41l4.59 4.59c.38.38 1.01.38 1.4-.01"/></svg>`;
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openPanel();
+  });
+
+  const preventScroll = (event) => {
+    event.preventDefault();
+  };
+
+  rail.addEventListener('wheel', preventScroll, { passive: false });
+  rail.addEventListener('touchmove', preventScroll, { passive: false });
+
+  rail.appendChild(button);
+  (document.body || document.documentElement).appendChild(rail);
+
+  const root = document.documentElement;
+  if (root) {
+    root.style.paddingRight = `${PANEL_RAIL_WIDTH}px`;
+  }
+  if (document.body) {
+    document.body.style.paddingRight = `${PANEL_RAIL_WIDTH}px`;
+  }
+
+  return rail;
+}
+
 function getPanel() {
   return document.getElementById(PANEL_ID);
 }
 
 function openPanel() {
+  ensurePanelRail();
   const existing = getPanel();
   if (existing) {
     existing.style.transform = 'translateX(0)';
@@ -330,6 +403,7 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 if (!window.__tabManagerMessageHandler) {
+  ensurePanelRail();
   const messageHandler = (event) => {
     if (event.origin !== EXTENSION_ORIGIN) {
       return;
