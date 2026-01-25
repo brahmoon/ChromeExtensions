@@ -151,6 +151,7 @@ let searchQuery = '';
 let activationHistory = loadActivationHistoryFromStorage();
 let lastKnownActiveTabId = null;
 let lastKnownOpenTabIds = new Set();
+let panelWindowId = null;
 const tabMetadataMap = new WeakMap();
 const groupMetadataMap = new WeakMap();
 let contextMenuState = {
@@ -190,6 +191,37 @@ function getSearchInput() {
 
 function getCloseButton() {
   return document.getElementById(CLOSE_BUTTON_ID);
+}
+
+async function getPanelWindowId() {
+  try {
+    const currentTab = await chrome.tabs.getCurrent();
+    if (currentTab && Number.isFinite(currentTab.windowId)) {
+      panelWindowId = currentTab.windowId;
+      return panelWindowId;
+    }
+  } catch (error) {
+    console.debug('Failed to resolve current tab for panel window:', error);
+  }
+
+  if (Number.isFinite(panelWindowId)) {
+    return panelWindowId;
+  }
+
+  try {
+    const [activeTab] = await chrome.tabs.query({
+      active: true,
+      lastFocusedWindow: true,
+    });
+    if (activeTab && Number.isFinite(activeTab.windowId)) {
+      panelWindowId = activeTab.windowId;
+      return panelWindowId;
+    }
+  } catch (error) {
+    console.debug('Failed to resolve focused window for panel:', error);
+  }
+
+  return null;
 }
 
 function resetContextMenuState() {
@@ -457,6 +489,49 @@ async function toggleTabMuteFromContextMenu(tab) {
   }
 }
 
+async function popUpTabsAsWindow(tabs) {
+  const tabIds = Array.isArray(tabs)
+    ? tabs
+        .filter((tab) => tab && Number.isFinite(tab.id))
+        .map((tab) => Math.trunc(tab.id))
+    : tabs && Number.isFinite(tabs.id)
+    ? [Math.trunc(tabs.id)]
+    : [];
+
+  if (tabIds.length === 0) {
+    return;
+  }
+
+  if (!chrome.windows?.create) {
+    console.warn('Window creation is not supported in this browser version.');
+    return;
+  }
+
+  captureScrollPositionForMutation();
+
+  const [firstTabId, ...rest] = tabIds;
+
+  try {
+    const newWindow = await chrome.windows.create({
+      tabId: firstTabId,
+      focused: true,
+      type: 'popup',
+    });
+
+    if (rest.length > 0 && Number.isFinite(newWindow?.id) && chrome.tabs?.move) {
+      await chrome.tabs.move(rest, { windowId: newWindow.id, index: -1 });
+    }
+  } catch (error) {
+    console.error('Failed to pop up tabs as new window:', error);
+  } finally {
+    try {
+      await refreshTabs();
+    } finally {
+      resumeScrollPersistenceAfterMutation();
+    }
+  }
+}
+
 function beginGroupRenameFromContextMenu(groupElement, metadata) {
   if (!groupElement || !metadata) {
     return;
@@ -539,6 +614,10 @@ function showTabContextMenu(event, context) {
         disabled: !linkAvailable,
       },
       {
+        label: '別のウィンドウとしてポップアップ',
+        onSelect: () => popUpTabsAsWindow(tab),
+      },
+      {
         label: 'タブを閉じる',
         onSelect: () => closeTabFromContextMenu(tab),
       },
@@ -562,6 +641,10 @@ function showGroupContextMenu(event, context) {
       {
         label: 'グループ名を変更',
         onSelect: () => beginGroupRenameFromContextMenu(element, context),
+      },
+      {
+        label: '別のウィンドウとしてポップアップ',
+        onSelect: () => popUpTabsAsWindow(context.tabs),
       },
       {
         label: 'グループを削除',
@@ -2128,9 +2211,14 @@ async function handleDomainGroupingOptionSelect(scope) {
   }
 
   try {
+    const windowId =
+      normalizedScope === DOMAIN_GROUP_SCOPE_CURRENT
+        ? await getPanelWindowId()
+        : null;
     const response = await chrome.runtime.sendMessage({
       type: GROUP_TABS_BY_DOMAIN_MESSAGE,
       scope: normalizedScope,
+      windowId: Number.isFinite(windowId) ? windowId : undefined,
     });
     if (!response?.ok) {
       throw new Error(response?.error || 'Grouping failed');
@@ -2555,7 +2643,9 @@ async function refreshTabs() {
 
   let tabs;
   try {
-    tabs = await chrome.tabs.query({});
+    const windowId = await getPanelWindowId();
+    const queryInfo = Number.isFinite(windowId) ? { windowId } : {};
+    tabs = await chrome.tabs.query(queryInfo);
   } catch (error) {
     console.error('Failed to query tabs:', error);
     return;
