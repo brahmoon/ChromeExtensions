@@ -5,7 +5,7 @@
   "action": {
     "default_title": "TabManager"
   },
-  "permissions": ["tabs", "activeTab", "scripting", "storage", "tabGroups"],
+  "permissions": ["tabs", "activeTab", "scripting", "storage", "tabGroups", "bookmarks"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"

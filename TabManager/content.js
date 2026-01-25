@@ -1,5 +1,9 @@
 const PANEL_ID = 'tab-manager-panel';
 const PANEL_WIDTH = 400;
+const PANEL_RAIL_WIDTH = 44;
+const PANEL_RAIL_ID = 'tab-manager-rail';
+const PANEL_RAIL_BUTTON_ID = 'tab-manager-rail-button';
+const PANEL_LAYOUT_WRAPPER_ID = 'tab-manager-layout-wrapper';
 const PREVIEW_OVERLAY_ID = 'tab-manager-preview-overlay';
 const PREVIEW_OVERLAY_MIN_HEIGHT = 180;
 const PREVIEW_OVERLAY_TRANSITION_MS = 180;
@@ -35,7 +39,7 @@ function ensurePreviewOverlayElements() {
     position: fixed;
     top: 0;
     left: 0;
-    right: ${PANEL_WIDTH}px;
+    right: ${PANEL_WIDTH + PANEL_RAIL_WIDTH}px;
     bottom: 0;
     z-index: 999998;
     pointer-events: none;
@@ -271,14 +275,113 @@ function createPanelElement() {
     position: fixed;
     top: 0;
     right: 0;
-    width: ${PANEL_WIDTH}px;
+    width: ${PANEL_WIDTH + PANEL_RAIL_WIDTH}px;
     height: 100%;
     z-index: 999999;
     border: none;
     box-shadow: -3px 0 8px rgba(0,0,0,0.3);
     transform: translateX(0);
   `;
+
+  const preventScroll = (event) => {
+    event.preventDefault();
+  };
+
+  iframe.addEventListener('wheel', preventScroll, { passive: false });
+  iframe.addEventListener('touchmove', preventScroll, { passive: false });
   return iframe;
+}
+
+function ensurePanelRail() {
+  const existing = document.getElementById(PANEL_RAIL_ID);
+  if (existing) {
+    return existing;
+  }
+
+  const body = document.body || document.documentElement;
+  if (!body) {
+    return null;
+  }
+
+  const layoutWrapper = document.createElement('div');
+  layoutWrapper.id = PANEL_LAYOUT_WRAPPER_ID;
+  layoutWrapper.setAttribute(EXTENSION_ELEMENT_ATTRIBUTE, '');
+  layoutWrapper.style.cssText = `
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 100vh;
+  `;
+
+  const children = Array.from(body.childNodes);
+  children.forEach((node) => {
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      layoutWrapper.appendChild(node);
+      return;
+    }
+
+    const element = node;
+    if (element.hasAttribute(EXTENSION_ELEMENT_ATTRIBUTE)) {
+      return;
+    }
+    layoutWrapper.appendChild(node);
+  });
+
+  body.style.display = 'flex';
+  body.style.alignItems = 'stretch';
+  body.style.margin = '0';
+  body.appendChild(layoutWrapper);
+
+  const rail = document.createElement('div');
+  rail.id = PANEL_RAIL_ID;
+  rail.setAttribute(EXTENSION_ELEMENT_ATTRIBUTE, '');
+  rail.style.cssText = `
+    position: relative;
+    width: ${PANEL_RAIL_WIDTH}px;
+    min-height: 100vh;
+    flex: 0 0 ${PANEL_RAIL_WIDTH}px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 12px 0;
+    box-sizing: border-box;
+    background: rgba(32, 33, 36, 0.12);
+    backdrop-filter: blur(6px);
+  `;
+
+  const button = document.createElement('button');
+  button.id = PANEL_RAIL_BUTTON_ID;
+  button.type = 'button';
+  button.setAttribute(EXTENSION_ELEMENT_ATTRIBUTE, '');
+  button.style.cssText = `
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: rgba(32, 33, 36, 0.6);
+    color: #e8eaed;
+    border-radius: 6px;
+    cursor: pointer;
+  `;
+  button.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M18.29 17.29a.996.996 0 0 0 0-1.41L14.42 12l3.88-3.88a.996.996 0 1 0-1.41-1.41L12.3 11.3a.996.996 0 0 0 0 1.41l4.59 4.59c.38.38 1.01.38 1.4-.01"/><path fill="currentColor" d="M11.7 17.29a.996.996 0 0 0 0-1.41L7.83 12l3.88-3.88a.996.996 0 1 0-1.41-1.41L5.71 11.3a.996.996 0 0 0 0 1.41l4.59 4.59c.38.38 1.01.38 1.4-.01"/></svg>`;
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openPanel();
+  });
+
+  const preventScroll = (event) => {
+    event.preventDefault();
+  };
+
+  rail.addEventListener('wheel', preventScroll, { passive: false });
+  rail.addEventListener('touchmove', preventScroll, { passive: false });
+
+  rail.appendChild(button);
+  body.appendChild(rail);
+
+  return rail;
 }
 
 function getPanel() {
@@ -286,6 +389,7 @@ function getPanel() {
 }
 
 function openPanel() {
+  ensurePanelRail();
   const existing = getPanel();
   if (existing) {
     existing.style.transform = 'translateX(0)';
@@ -323,6 +427,7 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 if (!window.__tabManagerMessageHandler) {
+  ensurePanelRail();
   const messageHandler = (event) => {
     if (event.origin !== EXTENSION_ORIGIN) {
       return;
