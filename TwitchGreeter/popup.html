@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Twitch Greeter</title>
+  <style>
+    body {
+      width: 350px;
+      font-family: Arial, sans-serif;
+      padding: 10px;
+    }
+    
+    h1 {
+      font-size: 18px;
+      margin-bottom: 15px;
+    }
+    
+    .user-list {
+      max-height: 300px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      padding: 10px;
+      margin-bottom: 15px;
+    }
+    
+    .user-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 5px 0;
+      border-bottom: 1px solid #eee;
+    }
+    
+    .user-item:last-child {
+      border-bottom: none;
+    }
+    
+    .user-info {
+      display: flex;
+      align-items: center;
+    }
+    
+    .user-checkbox {
+      margin-right: 10px;
+    }
+    
+    .controls {
+      display: flex;
+      justify-content: space-between;
+    }
+    
+    button {
+      padding: 8px 12px;
+      border: none;
+      border-radius: 4px;
+      background-color: #9147ff;
+      color: white;
+      cursor: pointer;
+    }
+    
+    button:hover {
+      background-color: #772ce8;
+    }
+    
+    button.reset {
+      background-color: #f44336;
+    }
+    
+    button.reset:hover {
+      background-color: #d32f2f;
+    }
+  </style>
+</head>
+<body>
+  <h1>Twitch挨拶管理</h1>
+  
+  <div class="user-list" id="userList">
+    <div class="loading">読み込み中...</div>
+  </div>
+  
+  <div class="controls">
+    <button id="resetBtn" class="reset">すべてリセット</button>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>
