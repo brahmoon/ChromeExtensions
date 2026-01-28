@@ -1,17 +1,17 @@
-const PANEL_ID = 'tab-manager-panel';
+const PANEL_ID = 'tmx-tab-manager-panel';
 const PANEL_WIDTH = 400;
 const PANEL_RAIL_WIDTH = 44;
-const PANEL_RAIL_ID = 'tab-manager-rail';
-const PANEL_RAIL_BUTTON_ID = 'tab-manager-rail-button';
-const PANEL_LAYOUT_WRAPPER_ID = 'tab-manager-layout-wrapper';
-const PREVIEW_OVERLAY_ID = 'tab-manager-preview-overlay';
+const PANEL_RAIL_ID = 'tmx-tab-manager-rail';
+const PANEL_RAIL_BUTTON_ID = 'tmx-tab-manager-rail-button';
+const PANEL_LAYOUT_WRAPPER_ID = 'tmx-tab-manager-layout-wrapper';
+const PREVIEW_OVERLAY_ID = 'tmx-tab-manager-preview-overlay';
 const PREVIEW_OVERLAY_MIN_HEIGHT = 180;
 const PREVIEW_OVERLAY_TRANSITION_MS = 180;
 const PREVIEW_OVERLAY_SANDBOX = 'allow-same-origin';
 const PREVIEW_OVERLAY_UPDATE_MESSAGE = 'TabManagerPreviewOverlayUpdate';
 const PREVIEW_OVERLAY_VISIBILITY_MESSAGE = 'TabManagerPreviewOverlayVisibility';
 const EXTENSION_ORIGIN = chrome.runtime.getURL('').replace(/\/$/, '');
-const EXTENSION_ELEMENT_ATTRIBUTE = 'data-tab-manager-element';
+const EXTENSION_ELEMENT_ATTRIBUTE = 'data-tmx-tab-manager-element';
 
 let previewOverlayElements = null;
 let previewOverlayVisible = false;
@@ -292,14 +292,15 @@ function createPanelElement() {
   return iframe;
 }
 
-function ensurePanelRail() {
-  const existing = document.getElementById(PANEL_RAIL_ID);
-  if (existing) {
-    return existing;
+function ensureLayoutWrapper() {
+  const existingWrapper = document.getElementById(PANEL_LAYOUT_WRAPPER_ID);
+  if (existingWrapper) {
+    return existingWrapper;
   }
 
-  const body = document.body || document.documentElement;
-  if (!body) {
+  const root = document.documentElement;
+  const body = document.body;
+  if (!root || !body) {
     return null;
   }
 
@@ -326,10 +327,28 @@ function ensurePanelRail() {
     layoutWrapper.appendChild(node);
   });
 
+  root.style.height = '100%';
   body.style.display = 'flex';
   body.style.alignItems = 'stretch';
   body.style.margin = '0';
+  body.style.minHeight = '100vh';
   body.appendChild(layoutWrapper);
+
+  return layoutWrapper;
+}
+
+function ensurePanelRail() {
+  const existing = document.getElementById(PANEL_RAIL_ID);
+  if (existing) {
+    return existing;
+  }
+
+  const body = document.body;
+  if (!body) {
+    return null;
+  }
+
+  ensureLayoutWrapper();
 
   const rail = document.createElement('div');
   rail.id = PANEL_RAIL_ID;
