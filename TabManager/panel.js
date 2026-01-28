@@ -30,9 +30,10 @@ const CONTEXT_TARGET_TYPE_TAB = 'tab';
 const CONTEXT_TARGET_TYPE_GROUP = 'group';
 const AUTO_DOMAIN_GROUP_STORAGE_KEY = 'tabManagerAutoDomainGrouping';
 const DOMAIN_GROUP_AUTO_TOGGLE_ID = 'domain-group-auto-toggle';
-const THEME_STORAGE_KEY = 'tabManagerTheme';
-const THEME_SELECT_ID = 'theme-select';
-const DEFAULT_THEME_ID = 'slate';
+const THEME_COLOR_STORAGE_KEY = 'tabManagerThemeColor';
+const THEME_COLOR_INPUT_ID = 'theme-color-input';
+const THEME_COLOR_TEXT_ID = 'theme-color-text';
+const DEFAULT_THEME_COLOR = '#8ab4f8';
 const GROUP_LABELS_STORAGE_KEY = 'tabManagerGroupLabels';
 const GROUP_EXPANSION_STORAGE_KEY = 'tabManagerGroupExpansionState';
 const SCROLL_POSITION_STORAGE_KEY = 'tabManagerScrollPosition';
@@ -56,81 +57,6 @@ const TAB_GROUP_COLORS = {
   orange: '#fa7b17',
 };
 
-const THEMES = {
-  slate: {
-    label: 'スレート',
-    colorScheme: 'dark',
-    properties: {
-      '--tm-bg': '#202124',
-      '--tm-header-bg': '#303134',
-      '--tm-border': '#444',
-      '--tm-divider': '#333',
-      '--tm-hover-bg': '#3c4043',
-      '--tm-active-bg': 'rgba(138, 180, 248, 0.18)',
-      '--tm-text-primary': '#e8eaed',
-      '--tm-text-muted': '#bdc1c6',
-      '--tm-button-bg': '#3c4043',
-      '--tm-button-border': '#5f6368',
-      '--tm-button-hover-bg': '#4a4f54',
-      '--tm-button-hover-border': '#8ab4f8',
-      '--tm-icon-muted': '#a9a9a9',
-      '--tm-overlay': 'rgba(255, 255, 255, 0.12)',
-      '--tm-soft-overlay': 'rgba(255, 255, 255, 0.08)',
-      '--tm-strong-overlay': 'rgba(255, 255, 255, 0.18)',
-      '--tm-indicator-border': 'rgba(255, 255, 255, 0.15)',
-      '--tm-accent': '#8ab4f8',
-    },
-  },
-  ocean: {
-    label: 'オーシャン',
-    colorScheme: 'dark',
-    properties: {
-      '--tm-bg': '#16222b',
-      '--tm-header-bg': '#1d2d38',
-      '--tm-border': '#27465a',
-      '--tm-divider': '#203648',
-      '--tm-hover-bg': '#233848',
-      '--tm-active-bg': 'rgba(94, 177, 255, 0.22)',
-      '--tm-text-primary': '#f1f7ff',
-      '--tm-text-muted': '#9fb6c8',
-      '--tm-button-bg': '#22384a',
-      '--tm-button-border': '#36566d',
-      '--tm-button-hover-bg': '#29445a',
-      '--tm-button-hover-border': '#5eb1ff',
-      '--tm-icon-muted': '#9fb6c8',
-      '--tm-overlay': 'rgba(94, 177, 255, 0.16)',
-      '--tm-soft-overlay': 'rgba(94, 177, 255, 0.12)',
-      '--tm-strong-overlay': 'rgba(94, 177, 255, 0.25)',
-      '--tm-indicator-border': 'rgba(94, 177, 255, 0.35)',
-      '--tm-accent': '#5eb1ff',
-    },
-  },
-  rose: {
-    label: 'ローズ',
-    colorScheme: 'dark',
-    properties: {
-      '--tm-bg': '#2b1d27',
-      '--tm-header-bg': '#3a2635',
-      '--tm-border': '#523545',
-      '--tm-divider': '#412d3b',
-      '--tm-hover-bg': '#3b2838',
-      '--tm-active-bg': 'rgba(255, 140, 188, 0.22)',
-      '--tm-text-primary': '#f8e9f1',
-      '--tm-text-muted': '#d9b7c9',
-      '--tm-button-bg': '#3d2a3a',
-      '--tm-button-border': '#63455a',
-      '--tm-button-hover-bg': '#4a3347',
-      '--tm-button-hover-border': '#ff8cbc',
-      '--tm-icon-muted': '#cfa2b6',
-      '--tm-overlay': 'rgba(255, 140, 188, 0.14)',
-      '--tm-soft-overlay': 'rgba(255, 140, 188, 0.1)',
-      '--tm-strong-overlay': 'rgba(255, 140, 188, 0.24)',
-      '--tm-indicator-border': 'rgba(255, 140, 188, 0.28)',
-      '--tm-accent': '#ff8cbc',
-    },
-  },
-};
-
 let previewEnabled = false;
 let previewCache = {};
 const previewUnavailableTabs = new Set();
@@ -138,7 +64,7 @@ let activePreviewTabId = null;
 let previewRenderTimeout = null;
 let optionsViewOpen = false;
 let domainGroupingMenuOpen = false;
-let currentThemeId = DEFAULT_THEME_ID;
+let currentThemeColor = DEFAULT_THEME_COLOR;
 let groupLabels = loadGroupLabelsFromStorage();
 let groupExpansionState = {};
 let storedScrollPosition = loadScrollPositionFromStorage();
@@ -1607,21 +1533,163 @@ function resolveGroupColor(colorName) {
   return TAB_GROUP_COLORS[colorName] || TAB_GROUP_COLORS.grey;
 }
 
-function getResolvedTheme(themeId) {
-  if (typeof themeId === 'string' && THEMES[themeId]) {
-    return { id: themeId, definition: THEMES[themeId] };
-  }
-  return { id: DEFAULT_THEME_ID, definition: THEMES[DEFAULT_THEME_ID] };
+function clampValue(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }
 
-function applyThemeStyles(themeId) {
-  const { id, definition } = getResolvedTheme(themeId);
+function normalizeHexColor(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const hex = trimmed.startsWith('#') ? trimmed.slice(1) : trimmed;
+  if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+    return `#${hex
+      .split('')
+      .map((char) => char + char)
+      .join('')
+      .toLowerCase()}`;
+  }
+  if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+    return `#${hex.toLowerCase()}`;
+  }
+  return null;
+}
+
+function hexToRgb(hex) {
+  const normalized = normalizeHexColor(hex);
+  if (!normalized) {
+    return null;
+  }
+  const value = normalized.slice(1);
+  return {
+    r: parseInt(value.slice(0, 2), 16),
+    g: parseInt(value.slice(2, 4), 16),
+    b: parseInt(value.slice(4, 6), 16),
+  };
+}
+
+function rgbToHex({ r, g, b }) {
+  const toHex = (channel) => channel.toString(16).padStart(2, '0');
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function rgbToHsl({ r, g, b }) {
+  const red = r / 255;
+  const green = g / 255;
+  const blue = b / 255;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const delta = max - min;
+  let h = 0;
+  let s = 0;
+  const l = (max + min) / 2;
+
+  if (delta !== 0) {
+    s = l > 0.5 ? delta / (2 - max - min) : delta / (max + min);
+    switch (max) {
+      case red:
+        h = (green - blue) / delta + (green < blue ? 6 : 0);
+        break;
+      case green:
+        h = (blue - red) / delta + 2;
+        break;
+      default:
+        h = (red - green) / delta + 4;
+        break;
+    }
+    h *= 60;
+  }
+
+  return { h, s, l };
+}
+
+function hslToRgb({ h, s, l }) {
+  const hue = ((h % 360) + 360) % 360;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = l - c / 2;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+
+  if (hue < 60) {
+    r = c;
+    g = x;
+  } else if (hue < 120) {
+    r = x;
+    g = c;
+  } else if (hue < 180) {
+    g = c;
+    b = x;
+  } else if (hue < 240) {
+    g = x;
+    b = c;
+  } else if (hue < 300) {
+    r = x;
+    b = c;
+  } else {
+    r = c;
+    b = x;
+  }
+
+  return {
+    r: Math.round((r + m) * 255),
+    g: Math.round((g + m) * 255),
+    b: Math.round((b + m) * 255),
+  };
+}
+
+function hslToCss(h, s, l) {
+  return `hsl(${Math.round(h)}, ${Math.round(s * 100)}%, ${Math.round(l * 100)}%)`;
+}
+
+function hslaToCss(h, s, l, a) {
+  return `hsla(${Math.round(h)}, ${Math.round(s * 100)}%, ${Math.round(l * 100)}%, ${a})`;
+}
+
+function buildThemeProperties(colorHex) {
+  const rgb = hexToRgb(colorHex) ?? hexToRgb(DEFAULT_THEME_COLOR);
+  const { h, s, l } = rgbToHsl(rgb);
+  const baseHue = h;
+  const baseSat = clampValue(s * 0.45 + 0.08, 0.18, 0.42);
+  const accentSat = clampValue(s * 0.9 + 0.1, 0.4, 0.9);
+  const accentLight = clampValue(l, 0.45, 0.65);
+  const accent = rgbToHex(hslToRgb({ h: baseHue, s: accentSat, l: accentLight }));
+
+  return {
+    '--tm-bg': hslToCss(baseHue, baseSat, 0.12),
+    '--tm-header-bg': hslToCss(baseHue, baseSat, 0.16),
+    '--tm-border': hslToCss(baseHue, baseSat, 0.28),
+    '--tm-divider': hslToCss(baseHue, baseSat, 0.22),
+    '--tm-hover-bg': hslToCss(baseHue, baseSat, 0.2),
+    '--tm-active-bg': hslaToCss(baseHue, clampValue(accentSat + 0.1, 0.5, 0.9), 0.6, 0.22),
+    '--tm-text-primary': hslToCss(baseHue, 0.12, 0.92),
+    '--tm-text-muted': hslToCss(baseHue, 0.14, 0.74),
+    '--tm-button-bg': hslToCss(baseHue, baseSat, 0.22),
+    '--tm-button-border': hslToCss(baseHue, baseSat, 0.32),
+    '--tm-button-hover-bg': hslToCss(baseHue, baseSat, 0.26),
+    '--tm-button-hover-border': accent,
+    '--tm-icon-muted': hslToCss(baseHue, 0.16, 0.66),
+    '--tm-overlay': hslaToCss(baseHue, baseSat, 0.8, 0.12),
+    '--tm-soft-overlay': hslaToCss(baseHue, baseSat, 0.8, 0.08),
+    '--tm-strong-overlay': hslaToCss(baseHue, baseSat, 0.78, 0.18),
+    '--tm-indicator-border': hslaToCss(baseHue, baseSat, 0.74, 0.25),
+    '--tm-accent': accent,
+  };
+}
+
+function applyThemeStyles(colorHex) {
+  const normalized = normalizeHexColor(colorHex) || DEFAULT_THEME_COLOR;
   const root = document.documentElement;
-  if (!root || !definition) {
+  if (!root) {
     return;
   }
 
-  const properties = definition.properties || {};
+  const properties = buildThemeProperties(normalized);
   for (const [name, value] of Object.entries(properties)) {
     try {
       root.style.setProperty(name, value);
@@ -1630,56 +1698,50 @@ function applyThemeStyles(themeId) {
     }
   }
 
-  const scheme = definition.colorScheme || 'dark';
   try {
-    root.style.setProperty('--tm-color-scheme', scheme);
-    root.style.colorScheme = scheme;
+    root.style.setProperty('--tm-color-scheme', 'dark');
+    root.style.colorScheme = 'dark';
   } catch (error) {
     // ignore color scheme assignment failures
   }
 
-  root.setAttribute('data-tab-manager-theme', id);
+  root.setAttribute('data-tab-manager-theme', 'custom');
   if (document.body) {
-    document.body.setAttribute('data-tab-manager-theme', id);
+    document.body.setAttribute('data-tab-manager-theme', 'custom');
   }
 }
 
-function getThemeSelect() {
-  return document.getElementById(THEME_SELECT_ID);
+function getThemeColorInput() {
+  return document.getElementById(THEME_COLOR_INPUT_ID);
 }
 
-function populateThemeSelectOptions(select) {
-  if (!select) {
+function getThemeColorTextInput() {
+  return document.getElementById(THEME_COLOR_TEXT_ID);
+}
+
+function updateThemeColorUI(colorHex) {
+  const normalized = normalizeHexColor(colorHex);
+  if (!normalized) {
     return;
   }
-
-  const options = Object.entries(THEMES);
-  select.textContent = '';
-  for (const [themeId, theme] of options) {
-    const option = document.createElement('option');
-    option.value = themeId;
-    option.textContent = theme?.label || themeId;
-    select.appendChild(option);
+  const picker = getThemeColorInput();
+  if (picker && picker.value !== normalized) {
+    picker.value = normalized;
   }
-
-  select.value = currentThemeId;
+  const textInput = getThemeColorTextInput();
+  if (textInput && textInput.value.trim().toLowerCase() !== normalized) {
+    textInput.value = normalized;
+  }
 }
 
-function updateThemeSelectUI() {
-  const select = getThemeSelect();
-  if (!select) {
+function setThemeColor(colorHex, { persist = true } = {}) {
+  const normalized = normalizeHexColor(colorHex);
+  if (!normalized) {
     return;
   }
-  if (select.value !== currentThemeId) {
-    select.value = currentThemeId;
-  }
-}
-
-function setTheme(themeId, { persist = true } = {}) {
-  const { id } = getResolvedTheme(themeId);
-  currentThemeId = id;
-  applyThemeStyles(id);
-  updateThemeSelectUI();
+  currentThemeColor = normalized;
+  applyThemeStyles(normalized);
+  updateThemeColorUI(normalized);
 
   if (!persist) {
     return;
@@ -1687,7 +1749,7 @@ function setTheme(themeId, { persist = true } = {}) {
 
   try {
     if (chrome?.storage?.local?.set) {
-      const result = chrome.storage.local.set({ [THEME_STORAGE_KEY]: id });
+      const result = chrome.storage.local.set({ [THEME_COLOR_STORAGE_KEY]: normalized });
       if (result && typeof result.catch === 'function') {
         result.catch(() => {});
       }
@@ -1697,27 +1759,40 @@ function setTheme(themeId, { persist = true } = {}) {
   }
 }
 
-function handleThemeSelectChange(event) {
-  const nextThemeId = event?.target?.value;
-  setTheme(nextThemeId);
+function handleThemeColorInputChange(event) {
+  const nextValue = event?.target?.value;
+  setThemeColor(nextValue);
+}
+
+function handleThemeColorTextInput(event) {
+  const nextValue = event?.target?.value;
+  const normalized = normalizeHexColor(nextValue);
+  if (!normalized) {
+    return;
+  }
+  setThemeColor(normalized);
+}
+
+function handleThemeColorTextBlur() {
+  updateThemeColorUI(currentThemeColor);
 }
 
 async function initializeTheme() {
   if (!chrome?.storage?.local?.get) {
-    setTheme(DEFAULT_THEME_ID, { persist: false });
+    setThemeColor(DEFAULT_THEME_COLOR, { persist: false });
     return;
   }
 
   try {
     const stored = await chrome.storage.local.get({
-      [THEME_STORAGE_KEY]: DEFAULT_THEME_ID,
+      [THEME_COLOR_STORAGE_KEY]: DEFAULT_THEME_COLOR,
     });
-    const storedId = stored?.[THEME_STORAGE_KEY];
-    setTheme(typeof storedId === 'string' ? storedId : DEFAULT_THEME_ID, {
+    const storedColor = stored?.[THEME_COLOR_STORAGE_KEY];
+    setThemeColor(typeof storedColor === 'string' ? storedColor : DEFAULT_THEME_COLOR, {
       persist: false,
     });
   } catch (error) {
-    setTheme(DEFAULT_THEME_ID, { persist: false });
+    setThemeColor(DEFAULT_THEME_COLOR, { persist: false });
   }
 }
 
@@ -2589,11 +2664,14 @@ function setupOptionsControls() {
     toggle.addEventListener('change', handlePreviewToggleChange);
   }
 
-  const themeSelect = getThemeSelect();
-  if (themeSelect) {
-    populateThemeSelectOptions(themeSelect);
-    themeSelect.addEventListener('change', handleThemeSelectChange);
-    updateThemeSelectUI();
+  const themeColorInput = getThemeColorInput();
+  if (themeColorInput) {
+    themeColorInput.addEventListener('input', handleThemeColorInputChange);
+  }
+  const themeColorText = getThemeColorTextInput();
+  if (themeColorText) {
+    themeColorText.addEventListener('input', handleThemeColorTextInput);
+    themeColorText.addEventListener('blur', handleThemeColorTextBlur);
   }
 
   const clearButton = document.getElementById(PREVIEW_CACHE_CLEAR_BUTTON_ID);

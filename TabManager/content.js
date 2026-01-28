@@ -262,6 +262,19 @@ function hidePreviewOverlay({ immediate = false } = {}) {
   });
 }
 
+function disposePreviewOverlay() {
+  if (!previewOverlayElements) {
+    return;
+  }
+
+  const { container } = previewOverlayElements;
+  if (container?.isConnected) {
+    container.remove();
+  }
+  previewOverlayElements = null;
+  previewOverlayVisible = false;
+}
+
 function createPanelElement() {
   const iframe = document.createElement('iframe');
   iframe.id = PANEL_ID;
@@ -307,6 +320,7 @@ function openPanel() {
 
 function closePanel() {
   hidePreviewOverlay();
+  disposePreviewOverlay();
   const iframe = getPanel();
   if (!iframe) {
     return;
