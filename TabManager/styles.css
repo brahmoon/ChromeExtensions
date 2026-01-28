@@ -329,6 +329,48 @@ header.is-compact {
   outline-offset: 1px;
 }
 
+.option-color-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.option-color-input {
+  width: 36px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--tm-button-border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.option-color-input::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.option-color-input::-webkit-color-swatch {
+  border: none;
+  border-radius: 4px;
+}
+
+.option-color-text {
+  background-color: var(--tm-button-bg);
+  color: var(--tm-text-primary);
+  border: 1px solid var(--tm-button-border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 13px;
+  width: 110px;
+}
+
+.option-color-text:focus-visible,
+.option-color-input:focus-visible {
+  outline: 2px solid var(--tm-accent);
+  outline-offset: 1px;
+}
+
 .visually-hidden {
   position: absolute !important;
   width: 1px;

@@ -131,11 +131,28 @@
             プレビューを無効にしてもキャッシュは保持されます。必要に応じて下のボタンから削除できます。
           </p>
           <div class="option-row option-row--field">
-            <label for="theme-select" class="option-row__label">テーマカラー</label>
-            <select id="theme-select" class="option-select" aria-label="テーマカラー"></select>
+            <label for="theme-color-input" class="option-row__label">テーマカラー</label>
+            <div class="option-color-controls">
+              <input
+                type="color"
+                id="theme-color-input"
+                class="option-color-input"
+                aria-label="テーマカラーを選択"
+              />
+              <input
+                type="text"
+                id="theme-color-text"
+                class="option-color-text"
+                placeholder="#8ab4f8"
+                aria-label="テーマカラーコード"
+                inputmode="text"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </div>
           </div>
           <p class="option-description">
-            パネル全体の配色テーマを選択します。
+            カラーを選択すると、自動的にパネル全体の配色を調整します。
           </p>
           <div class="option-row option-row--button-row">
             <button type="button" id="preview-cache-clear-btn" class="option-button">
