@@ -803,19 +803,10 @@ async function openPanelOnTab(tabId) {
 }
 
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-  await Promise.all([ensurePanelStateReady(), ensurePreviewStateReady()]);
+  await ensurePreviewStateReady();
 
   if (previewEnabled) {
     await handleActiveTabPreviewOnActivation(tabId);
-  }
-
-  if (!panelState.isOpen) {
-    return;
-  }
-
-  const opened = await openPanelOnTab(tabId);
-  if (!opened) {
-    updatePanelState({ tabId: null, isOpen: false });
   }
 });
 
