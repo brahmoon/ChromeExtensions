@@ -299,7 +299,6 @@ function insertResetPanel(chatContainer) {
   resetPanelState.panelParent = panelParent;
 }
 
-
 function extractUserIdFromNotice(messageElement) {
   const text = (messageElement.textContent || '').replace(/\s+/g, ' ').trim();
   const suffix = 'を引き換えました';

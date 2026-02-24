@@ -34,8 +34,8 @@
 
 .greeting-close-button:hover {
   color: #ffffff;
+  background: rgba(255, 255, 255, 0.15);
 }
-
 
 .greeting-reset-panel.is-inactive {
   background: #3f3f3f;
@@ -65,3 +65,4 @@
 .greeting-reset-button:hover {
   background: var(--greeting-reset-button-hover-bg, rgba(255, 255, 255, 0.3));
 }
+
