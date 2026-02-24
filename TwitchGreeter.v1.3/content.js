@@ -299,7 +299,6 @@ function insertResetPanel(chatContainer) {
   resetPanelState.panelParent = panelParent;
 }
 
-
 function extractUserIdFromNotice(messageElement) {
   const text = (messageElement.textContent || '').replace(/\s+/g, ' ').trim();
   const suffix = 'を引き換えました';
@@ -319,6 +318,12 @@ function extractUserIdFromNotice(messageElement) {
 }
 
 function placeCheckbox(messageElement, checkbox) {
+  const timestampElement = messageElement.querySelector('.chat-line__timestamp');
+  if (timestampElement && timestampElement.parentNode) {
+    timestampElement.parentNode.insertBefore(checkbox, timestampElement);
+    return;
+  }
+
   const usernameContainer = messageElement.querySelector('.chat-line__username-container');
   if (usernameContainer) {
     usernameContainer.insertBefore(checkbox, usernameContainer.firstChild);
