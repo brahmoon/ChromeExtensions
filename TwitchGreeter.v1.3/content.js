@@ -249,9 +249,6 @@ function insertResetPanel(chatContainer) {
   panel.className = 'greeting-reset-panel';
   panel.innerHTML = `
     <div class="greeting-panel-actions">
-      <button type="button" class="greeting-settings-button" aria-label="設定を開く">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M19.9 12.66a1 1 0 0 1 0-1.32l1.28-1.44a1 1 0 0 0 .12-1.17l-2-3.46a1 1 0 0 0-1.07-.48l-1.88.38a1 1 0 0 1-1.15-.66l-.61-1.83a1 1 0 0 0-.95-.68h-4a1 1 0 0 0-1 .68l-.56 1.83a1 1 0 0 1-1.15.66L5 4.79a1 1 0 0 0-1 .48L2 8.73a1 1 0 0 0 .1 1.17l1.27 1.44a1 1 0 0 1 0 1.32L2.1 14.1a1 1 0 0 0-.1 1.17l2 3.46a1 1 0 0 0 1.07.48l1.88-.38a1 1 0 0 1 1.15.66l.61 1.83a1 1 0 0 0 1 .68h4a1 1 0 0 0 .95-.68l.61-1.83a1 1 0 0 1 1.15-.66l1.88.38a1 1 0 0 0 1.07-.48l2-3.46a1 1 0 0 0-.12-1.17ZM18.41 14l.8.9l-1.28 2.22l-1.18-.24a3 3 0 0 0-3.45 2L12.92 20h-2.56L10 18.86a3 3 0 0 0-3.45-2l-1.18.24l-1.3-2.21l.8-.9a3 3 0 0 0 0-4l-.8-.9l1.28-2.2l1.18.24a3 3 0 0 0 3.45-2L10.36 4h2.56l.38 1.14a3 3 0 0 0 3.45 2l1.18-.24l1.28 2.22l-.8.9a3 3 0 0 0 0 3.98Zm-6.77-6a4 4 0 1 0 4 4a4 4 0 0 0-4-4Zm0 6a2 2 0 1 1 2-2a2 2 0 0 1-2 2Z"/></svg>
-      </button>
       <button type="button" class="greeting-close-button" aria-label="パネルを閉じる">×</button>
     </div>
     <div class="greeting-reset-label">以下のボタンで挨拶記録をリセットできます。</div>
@@ -289,39 +286,6 @@ function insertResetPanel(chatContainer) {
     }
   };
 
-  const openSettingsModal = () => {
-    if (resetPanelState.settingsModalElement) {
-      return;
-    }
-
-    const overlay = document.createElement('div');
-    overlay.className = 'greeting-settings-modal';
-
-    const iframe = document.createElement('iframe');
-    iframe.className = 'greeting-settings-frame';
-    iframe.src = chrome.runtime.getURL('popup.html?modal=1');
-    iframe.title = 'Twitch Greeter 設定';
-    iframe.setAttribute('allow', 'clipboard-read; clipboard-write');
-
-    overlay.addEventListener('click', event => {
-      if (event.target === overlay) {
-        closeSettingsModal();
-      }
-    });
-
-    window.addEventListener('message', event => {
-      if (event.source !== iframe.contentWindow || event.data !== 'closeTwitchGreeterModal') {
-        return;
-      }
-      closeSettingsModal();
-    }, { once: true });
-
-    overlay.appendChild(iframe);
-    document.body.appendChild(overlay);
-    resetPanelState.settingsModalElement = overlay;
-    document.addEventListener('keydown', handleModalEscape);
-  };
-
   const clearGreetings = () => {
     greetedUsers = {};
     const allCheckboxes = document.querySelectorAll('.greeting-checkbox input');
@@ -344,10 +308,6 @@ function insertResetPanel(chatContainer) {
 
   panel.querySelector('.greeting-close-button').addEventListener('click', function() {
     removePanel();
-  });
-
-  panel.querySelector('.greeting-settings-button').addEventListener('click', function() {
-    openSettingsModal();
   });
 
   panelParent.appendChild(panel);
