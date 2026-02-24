@@ -6,7 +6,6 @@ const defaultSettings = {
 };
 
 document.addEventListener('DOMContentLoaded', function() {
-  const managedUi = document.getElementById('managedUi');
   const channelScopeSelect = document.getElementById('channelScope');
   const channelIdRow = document.getElementById('channelIdRow');
   const channelIdInput = document.getElementById('channelIdInput');
@@ -17,7 +16,6 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function applyEnabledState(enabled) {
-    managedUi.classList.toggle('is-hidden', !enabled);
     enabledToggle.checked = enabled;
   }
 
