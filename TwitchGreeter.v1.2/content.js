@@ -18,6 +18,11 @@ let currentSettings = { ...defaultSettings };
 
 function getCurrentChannelId() {
   const pathParts = window.location.pathname.split('/').filter(Boolean);
+
+  if (pathParts[0] === 'popout') {
+    return pathParts[1] ? pathParts[1].toLowerCase() : '';
+  }
+
   return pathParts[0] ? pathParts[0].toLowerCase() : '';
 }
 
@@ -168,6 +173,7 @@ function insertResetPanel(chatContainer) {
   const panel = document.createElement('div');
   panel.className = 'greeting-reset-panel';
   panel.innerHTML = `
+    <button type="button" class="greeting-close-button" aria-label="パネルを閉じる">×</button>
     <div class="greeting-reset-label">以下のボタンで挨拶記録をリセットできます。</div>
     <div class="greeting-reset-buttons">
       <button type="button" class="greeting-reset-button greeting-reset-confirm">リセット</button>
@@ -198,6 +204,13 @@ function insertResetPanel(chatContainer) {
 
   panel.querySelector('.greeting-reset-skip').addEventListener('click', function() {
     dimPanel();
+  });
+
+  panel.querySelector('.greeting-close-button').addEventListener('click', function() {
+    panelParent.remove();
+    resetPanelState.rendered = false;
+    resetPanelState.panelElement = null;
+    resetPanelState.panelParent = null;
   });
 
   panelParent.appendChild(panel);
