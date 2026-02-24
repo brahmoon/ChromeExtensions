@@ -9,8 +9,9 @@
       font-family: Arial, sans-serif;
       padding: 10px;
       position: relative;
-      min-height: 430px;
+      min-height: 470px;
       box-sizing: border-box;
+      background: var(--popup-bg-color, #f7f3ff);
     }
 
     h1 {
@@ -38,7 +39,8 @@
     }
 
     #channelScope,
-    #channelIdInput {
+    #channelIdInput,
+    #themeColorInput {
       flex: 1;
       padding: 6px;
       border: 1px solid #ccc;
@@ -49,6 +51,21 @@
       display: none;
     }
 
+    .color-preview {
+      width: 30px;
+      height: 18px;
+      border: 1px solid #999;
+      border-radius: 3px;
+      cursor: pointer;
+      display: inline-block;
+      flex-shrink: 0;
+      background: #000000;
+    }
+
+    #themeColorPicker {
+      display: none;
+    }
+
     .user-list {
       max-height: 240px;
       overflow-y: auto;
@@ -56,6 +73,7 @@
       border-radius: 5px;
       padding: 10px;
       margin-bottom: 15px;
+      background: rgba(255, 255, 255, 0.8);
     }
 
     .user-item {
@@ -116,6 +134,22 @@
       font-size: 13px;
     }
 
+    .theme-color-setting {
+      position: absolute;
+      left: 10px;
+      bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      width: 240px;
+    }
+
+    .theme-color-setting label {
+      font-weight: bold;
+      white-space: nowrap;
+    }
+
     .switch {
       position: relative;
       display: inline-block;
@@ -160,10 +194,6 @@
     input:checked + .slider:before {
       transform: translateX(18px);
     }
-
-    .is-hidden {
-      display: none;
-    }
   </style>
 </head>
 <body>
@@ -191,6 +221,13 @@
     <div class="controls">
       <button id="resetBtn" class="reset">すべてリセット</button>
     </div>
+  </div>
+
+  <div class="theme-color-setting">
+    <label for="themeColorInput">テーマカラー</label>
+    <span class="color-preview" id="themeColorPreview" title="クリックして色を選択"></span>
+    <input type="text" id="themeColorInput" placeholder="#000000" maxlength="7">
+    <input type="color" id="themeColorPicker" value="#000000">
   </div>
 
   <div class="feature-toggle">

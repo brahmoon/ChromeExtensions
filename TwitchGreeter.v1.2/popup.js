@@ -2,14 +2,55 @@
 const defaultSettings = {
   extensionEnabled: true,
   channelScope: 'all',
-  targetChannelId: ''
+  targetChannelId: '',
+  themeColor: '#000000'
 };
+
+function normalizeHexColor(color) {
+  if (!color) return null;
+  const value = color.trim();
+  return /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : null;
+}
+
+function hexToRgb(hex) {
+  const normalized = normalizeHexColor(hex);
+  if (!normalized) return null;
+  return {
+    r: parseInt(normalized.slice(1, 3), 16),
+    g: parseInt(normalized.slice(3, 5), 16),
+    b: parseInt(normalized.slice(5, 7), 16)
+  };
+}
+
+function rgbToHex({ r, g, b }) {
+  const clamp = value => Math.max(0, Math.min(255, Math.round(value)));
+  return `#${[clamp(r), clamp(g), clamp(b)].map(v => v.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function mixWithWhite(hex, ratio) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return '#f7f3ff';
+  return rgbToHex({
+    r: rgb.r + (255 - rgb.r) * ratio,
+    g: rgb.g + (255 - rgb.g) * ratio,
+    b: rgb.b + (255 - rgb.b) * ratio
+  });
+}
+
+function applyThemeColor(themeColor) {
+  const normalized = normalizeHexColor(themeColor) || '#000000';
+  const pastelBg = mixWithWhite(normalized, 0.88);
+  document.documentElement.style.setProperty('--popup-bg-color', pastelBg);
+}
 
 document.addEventListener('DOMContentLoaded', function() {
   const channelScopeSelect = document.getElementById('channelScope');
   const channelIdRow = document.getElementById('channelIdRow');
   const channelIdInput = document.getElementById('channelIdInput');
   const enabledToggle = document.getElementById('enabledToggle');
+  const themeColorInput = document.getElementById('themeColorInput');
+  const themeColorPreview = document.getElementById('themeColorPreview');
+  const themeColorPicker = document.getElementById('themeColorPicker');
 
   function updateChannelIdVisibility(scope) {
     channelIdRow.style.display = scope === 'specific' ? 'flex' : 'none';
@@ -31,18 +72,34 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 
+  function applyThemeInputs(themeColor) {
+    const normalized = normalizeHexColor(themeColor) || '#000000';
+    themeColorInput.value = normalized;
+    themeColorPicker.value = normalized;
+    themeColorPreview.style.backgroundColor = normalized;
+    applyThemeColor(normalized);
+  }
+
+  function saveThemeColor(themeColor) {
+    chrome.storage.local.set({ themeColor: themeColor }, function() {
+      notifyActiveTab();
+    });
+  }
+
   function loadSettings() {
     chrome.storage.local.get(defaultSettings, function(data) {
       const settings = {
         extensionEnabled: data.extensionEnabled,
         channelScope: data.channelScope,
-        targetChannelId: data.targetChannelId
+        targetChannelId: data.targetChannelId,
+        themeColor: data.themeColor
       };
 
       applyEnabledState(settings.extensionEnabled);
       channelScopeSelect.value = settings.channelScope;
       channelIdInput.value = settings.targetChannelId || '';
       updateChannelIdVisibility(settings.channelScope);
+      applyThemeInputs(settings.themeColor);
     });
   }
 
@@ -138,6 +195,28 @@ document.addEventListener('DOMContentLoaded', function() {
       applyEnabledState(enabled);
       notifyActiveTab();
     });
+  });
+
+  themeColorInput.addEventListener('change', function() {
+    const normalized = normalizeHexColor(this.value);
+    if (!normalized) {
+      applyThemeInputs('#000000');
+      saveThemeColor('#000000');
+      return;
+    }
+
+    applyThemeInputs(normalized);
+    saveThemeColor(normalized);
+  });
+
+  themeColorPreview.addEventListener('click', function() {
+    themeColorPicker.click();
+  });
+
+  themeColorPicker.addEventListener('input', function() {
+    const normalized = normalizeHexColor(this.value) || '#000000';
+    applyThemeInputs(normalized);
+    saveThemeColor(normalized);
   });
 
   document.getElementById('resetBtn').addEventListener('click', function() {

@@ -11,9 +11,9 @@
 
 .greeting-reset-panel {
   position: relative;
-  background: #5f4b8b;
-  color: #f2ecff;
-  border: 1px solid #7860a9;
+  background: var(--greeting-panel-bg, #5f4b8b);
+  color: var(--greeting-panel-text, #f2ecff);
+  border: 1px solid var(--greeting-panel-border, #7860a9);
   border-radius: 8px;
   padding: 10px;
   margin-bottom: 8px;
@@ -25,7 +25,7 @@
   right: 8px;
   border: none;
   background: transparent;
-  color: #f2ecff;
+  color: var(--greeting-panel-text, #f2ecff);
   font-size: 16px;
   line-height: 1;
   cursor: pointer;

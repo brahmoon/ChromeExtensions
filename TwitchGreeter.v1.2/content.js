@@ -11,10 +11,54 @@ let resetPanelState = {
 const defaultSettings = {
   extensionEnabled: true,
   channelScope: 'all',
-  targetChannelId: ''
+  targetChannelId: '',
+  themeColor: '#000000'
 };
 
 let currentSettings = { ...defaultSettings };
+
+function normalizeHexColor(color) {
+  if (!color) return null;
+  const value = color.trim();
+  return /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : null;
+}
+
+function hexToRgb(hex) {
+  const normalized = normalizeHexColor(hex);
+  if (!normalized) return null;
+  return {
+    r: parseInt(normalized.slice(1, 3), 16),
+    g: parseInt(normalized.slice(3, 5), 16),
+    b: parseInt(normalized.slice(5, 7), 16)
+  };
+}
+
+function rgbToHex({ r, g, b }) {
+  const clamp = value => Math.max(0, Math.min(255, Math.round(value)));
+  return `#${[clamp(r), clamp(g), clamp(b)].map(v => v.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function mixColor(hexA, hexB, ratio) {
+  const a = hexToRgb(hexA);
+  const b = hexToRgb(hexB);
+  if (!a || !b) return '#5f4b8b';
+  return rgbToHex({
+    r: a.r * (1 - ratio) + b.r * ratio,
+    g: a.g * (1 - ratio) + b.g * ratio,
+    b: a.b * (1 - ratio) + b.b * ratio
+  });
+}
+
+function applyThemeColor(themeColor) {
+  const base = normalizeHexColor(themeColor) || '#000000';
+  const panelBg = mixColor(base, '#ffffff', 0.35);
+  const panelBorder = mixColor(base, '#000000', 0.15);
+  const textColor = mixColor(base, '#ffffff', 0.88);
+
+  document.documentElement.style.setProperty('--greeting-panel-bg', panelBg);
+  document.documentElement.style.setProperty('--greeting-panel-border', panelBorder);
+  document.documentElement.style.setProperty('--greeting-panel-text', textColor);
+}
 
 function getCurrentChannelId() {
   const pathParts = window.location.pathname.split('/').filter(Boolean);
@@ -66,9 +110,11 @@ function loadSettingsAndApply() {
     currentSettings = {
       extensionEnabled: data.extensionEnabled,
       channelScope: data.channelScope,
-      targetChannelId: data.targetChannelId
+      targetChannelId: data.targetChannelId,
+      themeColor: data.themeColor
     };
 
+    applyThemeColor(currentSettings.themeColor);
     applyFeatureState();
   });
 }
