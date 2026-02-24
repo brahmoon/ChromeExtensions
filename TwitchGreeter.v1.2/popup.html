@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Twitch Greeter</title>
+  <style>
+    body {
+      width: 350px;
+      font-family: Arial, sans-serif;
+      padding: 10px;
+      position: relative;
+      min-height: 430px;
+      box-sizing: border-box;
+    }
+
+    h1 {
+      font-size: 18px;
+      margin-bottom: 15px;
+    }
+
+    .settings-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .setting-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+    }
+
+    .setting-row label {
+      font-weight: bold;
+      min-width: 120px;
+    }
+
+    #channelScope,
+    #channelIdInput {
+      flex: 1;
+      padding: 6px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+
+    #channelIdRow {
+      display: none;
+    }
+
+    .user-list {
+      max-height: 240px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      padding: 10px;
+      margin-bottom: 15px;
+    }
+
+    .user-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 5px 0;
+      border-bottom: 1px solid #eee;
+    }
+
+    .user-item:last-child {
+      border-bottom: none;
+    }
+
+    .user-info {
+      display: flex;
+      align-items: center;
+    }
+
+    .user-checkbox {
+      margin-right: 10px;
+    }
+
+    .controls {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    button {
+      padding: 8px 12px;
+      border: none;
+      border-radius: 4px;
+      background-color: #9147ff;
+      color: white;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background-color: #772ce8;
+    }
+
+    button.reset {
+      background-color: #f44336;
+    }
+
+    button.reset:hover {
+      background-color: #d32f2f;
+    }
+
+    .feature-toggle {
+      position: absolute;
+      right: 10px;
+      bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 42px;
+      height: 24px;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: .2s;
+      border-radius: 24px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .2s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider {
+      background-color: #9147ff;
+    }
+
+    input:checked + .slider:before {
+      transform: translateX(18px);
+    }
+
+    .is-hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>Twitch挨拶管理</h1>
+
+  <div id="managedUi">
+    <div class="settings-panel">
+      <div class="setting-row">
+        <label for="channelScope">有効化するチャンネル：</label>
+        <select id="channelScope">
+          <option value="all">すべてのチャンネル</option>
+          <option value="specific">特定のチャンネル</option>
+        </select>
+      </div>
+      <div class="setting-row" id="channelIdRow">
+        <label for="channelIdInput">チャンネルID：</label>
+        <input type="text" id="channelIdInput" placeholder="機能を有効化するチャンネルのID">
+      </div>
+    </div>
+
+    <div class="user-list" id="userList">
+      <div class="loading">読み込み中...</div>
+    </div>
+
+    <div class="controls">
+      <button id="resetBtn" class="reset">すべてリセット</button>
+    </div>
+  </div>
+
+  <div class="feature-toggle">
+    <span>有効化：</span>
+    <label class="switch">
+      <input type="checkbox" id="enabledToggle" checked>
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
