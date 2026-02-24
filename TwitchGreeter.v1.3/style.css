@@ -1,0 +1,67 @@
+.greeting-checkbox {
+  display: inline-block;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+.greeting-checkbox input {
+  cursor: pointer;
+  transform: scale(1.2);
+}
+
+.greeting-reset-panel {
+  position: relative;
+  background: var(--greeting-panel-bg, #5f4b8b);
+  color: var(--greeting-panel-text, #f2ecff);
+  border: 1px solid var(--greeting-panel-border, #7860a9);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+.greeting-close-button {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  border: none;
+  background: transparent;
+  color: var(--greeting-panel-text, #f2ecff);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.greeting-close-button:hover {
+  color: #ffffff;
+}
+
+
+.greeting-reset-panel.is-inactive {
+  background: #3f3f3f;
+  border-color: #575757;
+}
+
+.greeting-reset-label {
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.greeting-reset-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.greeting-reset-button {
+  border: none;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  background: var(--greeting-reset-button-bg, rgba(255, 255, 255, 0.2));
+  color: var(--greeting-reset-button-text, #fff);
+}
+
+.greeting-reset-button:hover {
+  background: var(--greeting-reset-button-hover-bg, rgba(255, 255, 255, 0.3));
+}
