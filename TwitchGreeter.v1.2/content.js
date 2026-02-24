@@ -303,7 +303,9 @@ function addCheckboxToMessage(messageElement) {
   if (messageElement.matches('.chat-line__message')) {
     userId = messageElement.getAttribute('data-a-user');
   } else {
-    const text = messageElement.innerText;
+    const firstTextNode = [...messageElement.childNodes]
+    .find(node => node.nodeType === Node.TEXT_NODE);
+    const text = firstTextNode?.textContent?.trim();
     const match = text.match(/^(.+?)が.+を引き換えました$/);
     userId = match ? match[1] : null;
   }
