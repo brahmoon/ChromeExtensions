@@ -186,6 +186,13 @@ function insertResetPanel(chatContainer) {
     resetPanelState.dimmed = true;
   };
 
+  const removePanel = () => {
+    panelParent.remove();
+    resetPanelState.rendered = false;
+    resetPanelState.panelElement = null;
+    resetPanelState.panelParent = null;
+  };
+
   const clearGreetings = () => {
     greetedUsers = {};
     const allCheckboxes = document.querySelectorAll('.greeting-checkbox input');
@@ -203,14 +210,11 @@ function insertResetPanel(chatContainer) {
   });
 
   panel.querySelector('.greeting-reset-skip').addEventListener('click', function() {
-    dimPanel();
+    removePanel();
   });
 
   panel.querySelector('.greeting-close-button').addEventListener('click', function() {
-    panelParent.remove();
-    resetPanelState.rendered = false;
-    resetPanelState.panelElement = null;
-    resetPanelState.panelParent = null;
+    removePanel();
   });
 
   panelParent.appendChild(panel);
