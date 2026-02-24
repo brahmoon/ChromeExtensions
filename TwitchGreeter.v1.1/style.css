@@ -1,0 +1,48 @@
+.greeting-checkbox {
+  display: inline-block;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+.greeting-checkbox input {
+  cursor: pointer;
+  transform: scale(1.2);
+}
+
+.greeting-reset-panel {
+  background: #5f4b8b;
+  color: #f2ecff;
+  border: 1px solid #7860a9;
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+.greeting-reset-panel.is-inactive {
+  background: #3f3f3f;
+  border-color: #575757;
+}
+
+.greeting-reset-label {
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.greeting-reset-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.greeting-reset-button {
+  border: none;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.greeting-reset-button:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
