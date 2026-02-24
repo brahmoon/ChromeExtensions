@@ -64,7 +64,7 @@ function applyThemeColor(themeColor) {
   const panelBg = mixColor(base, '#ffffff', 0.35);
   const panelBorder = mixColor(base, '#000000', 0.15);
   const panelLightness = getLightness(panelBg);
-  const isLightTheme = panelLightness > 75;
+  const isLightTheme = panelLightness > 65;
   const textColor = isLightTheme ? '#444444' : mixColor(base, '#ffffff', 0.88);
   const buttonBg = isLightTheme ? mixColor(panelBg, '#000000', 0.28) : mixColor(panelBg, '#ffffff', 0.2);
   const buttonHoverBg = isLightTheme ? mixColor(panelBg, '#000000', 0.4) : mixColor(panelBg, '#ffffff', 0.3);
