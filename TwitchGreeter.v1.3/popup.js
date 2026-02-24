@@ -221,6 +221,12 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   popupCloseButton.addEventListener('click', function() {
+    const isModal = new URLSearchParams(window.location.search).get('modal') === '1';
+    if (isModal && window.parent && window.parent !== window) {
+      window.parent.postMessage('closeTwitchGreeterModal', '*');
+      return;
+    }
+
     window.close();
   });
 
