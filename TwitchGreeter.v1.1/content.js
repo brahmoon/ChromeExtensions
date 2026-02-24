@@ -87,7 +87,8 @@ function insertResetPanel(chatContainer) {
     return;
   }
 
-  const panelParent = chatContainer.querySelector('.chat-scrollable-area__message-container');
+  const panelParent = document.createElement('div');
+  panelParent.className = 'Layout-sc-1xcs6mc-0 greeting-reset-layout';
 
   const panel = document.createElement('div');
   panel.className = 'greeting-reset-panel';
@@ -124,7 +125,8 @@ function insertResetPanel(chatContainer) {
     dimPanel();
   });
 
-  panelParent.insertBefore(panel, panelParent.firstChild);
+  panelParent.appendChild(panel);
+  chatContainer.insertBefore(panelParent, chatContainer.firstChild);
   resetPanelState.rendered = true;
 }
 
