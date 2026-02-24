@@ -12,7 +12,7 @@ const defaultSettings = {
   extensionEnabled: true,
   channelScope: 'all',
   targetChannelId: '',
-  themeColor: '#000000'
+  themeColor: '#6441a5'
 };
 
 let currentSettings = { ...defaultSettings };
@@ -38,6 +38,16 @@ function rgbToHex({ r, g, b }) {
   return `#${[clamp(r), clamp(g), clamp(b)].map(v => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
+function getLightness(hex) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return 0;
+
+  const values = [rgb.r, rgb.g, rgb.b].map(value => value / 255);
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  return ((max + min) / 2) * 100;
+}
+
 function mixColor(hexA, hexB, ratio) {
   const a = hexToRgb(hexA);
   const b = hexToRgb(hexB);
@@ -50,14 +60,22 @@ function mixColor(hexA, hexB, ratio) {
 }
 
 function applyThemeColor(themeColor) {
-  const base = normalizeHexColor(themeColor) || '#000000';
+  const base = normalizeHexColor(themeColor) || '#6441a5';
   const panelBg = mixColor(base, '#ffffff', 0.35);
   const panelBorder = mixColor(base, '#000000', 0.15);
-  const textColor = mixColor(base, '#ffffff', 0.88);
+  const panelLightness = getLightness(panelBg);
+  const isLightTheme = panelLightness > 75;
+  const textColor = isLightTheme ? '#444444' : mixColor(base, '#ffffff', 0.88);
+  const buttonBg = isLightTheme ? mixColor(panelBg, '#000000', 0.28) : mixColor(panelBg, '#ffffff', 0.2);
+  const buttonHoverBg = isLightTheme ? mixColor(panelBg, '#000000', 0.4) : mixColor(panelBg, '#ffffff', 0.3);
+  const buttonText = isLightTheme ? '#ffffff' : '#f7f3ff';
 
   document.documentElement.style.setProperty('--greeting-panel-bg', panelBg);
   document.documentElement.style.setProperty('--greeting-panel-border', panelBorder);
   document.documentElement.style.setProperty('--greeting-panel-text', textColor);
+  document.documentElement.style.setProperty('--greeting-reset-button-bg', buttonBg);
+  document.documentElement.style.setProperty('--greeting-reset-button-hover-bg', buttonHoverBg);
+  document.documentElement.style.setProperty('--greeting-reset-button-text', buttonText);
 }
 
 function getCurrentChannelId() {
