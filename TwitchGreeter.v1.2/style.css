@@ -58,10 +58,10 @@
   padding: 6px 10px;
   font-size: 12px;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
+  background: var(--greeting-reset-button-bg, rgba(255, 255, 255, 0.2));
+  color: var(--greeting-reset-button-text, #fff);
 }
 
 .greeting-reset-button:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--greeting-reset-button-hover-bg, rgba(255, 255, 255, 0.3));
 }

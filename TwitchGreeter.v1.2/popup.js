@@ -3,7 +3,7 @@ const defaultSettings = {
   extensionEnabled: true,
   channelScope: 'all',
   targetChannelId: '',
-  themeColor: '#000000'
+  themeColor: '#6441a5'
 };
 
 function normalizeHexColor(color) {
@@ -38,7 +38,7 @@ function mixWithWhite(hex, ratio) {
 }
 
 function applyThemeColor(themeColor) {
-  const normalized = normalizeHexColor(themeColor) || '#000000';
+  const normalized = normalizeHexColor(themeColor) || '#6441a5';
   const pastelBg = mixWithWhite(normalized, 0.88);
   document.documentElement.style.setProperty('--popup-bg-color', pastelBg);
 }
@@ -73,7 +73,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function applyThemeInputs(themeColor) {
-    const normalized = normalizeHexColor(themeColor) || '#000000';
+    const normalized = normalizeHexColor(themeColor) || '#6441a5';
     themeColorInput.value = normalized;
     themeColorPicker.value = normalized;
     themeColorPreview.style.backgroundColor = normalized;
@@ -200,8 +200,8 @@ document.addEventListener('DOMContentLoaded', function() {
   themeColorInput.addEventListener('change', function() {
     const normalized = normalizeHexColor(this.value);
     if (!normalized) {
-      applyThemeInputs('#000000');
-      saveThemeColor('#000000');
+      applyThemeInputs('#6441a5');
+      saveThemeColor('#6441a5');
       return;
     }
 
@@ -214,7 +214,7 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   themeColorPicker.addEventListener('input', function() {
-    const normalized = normalizeHexColor(this.value) || '#000000';
+    const normalized = normalizeHexColor(this.value) || '#6441a5';
     applyThemeInputs(normalized);
     saveThemeColor(normalized);
   });
