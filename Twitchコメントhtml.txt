@@ -1,0 +1,103 @@
+
+<div class="Layout-sc-1xcs6mc-0">
+<div class="Layout-sc-1xcs6mc-0">
+<div class="Layout-sc-1xcs6mc-0 eCiQQE">
+<div class="Layout-sc-1xcs6mc-0 ijxYla" style="background: var(--color-border-quote);">
+</div>
+<div data-test-selector="user-notice-line" class="Layout-sc-1xcs6mc-0 eynKOr" style="overflow-wrap: break-word;">
+<div class="Layout-sc-1xcs6mc-0 fHdBNk">
+<div class="Layout-sc-1xcs6mc-0 grjXFy">参加リクエストを引き換えました
+<div class="Layout-sc-1xcs6mc-0 dMnClf channel-points-reward-line__icon">
+<div class="Layout-sc-1xcs6mc-0 liPKTE channel-points-icon channel-points-icon--medium">
+<img class="channel-points-icon__image" alt="" src="https://static-cdn.jtvnw.net/channel-points-icons/721207370/1e29ab0b-4789-4753-8470-bffa4f57e6e5/icon-1.png" srcset="https://static-cdn.jtvnw.net/channel-points-icons/721207370/1e29ab0b-4789-4753-8470-bffa4f57e6e5/icon-1.png 1x, https://static-cdn.jtvnw.net/channel-points-icons/721207370/1e29ab0b-4789-4753-8470-bffa4f57e6e5/icon-2.png 2x, https://static-cdn.jtvnw.net/channel-points-icons/721207370/1e29ab0b-4789-4753-8470-bffa4f57e6e5/icon-4.png 4x">
+</div>
+</div>10
+</div>
+</div>
+<div class="Layout-sc-1xcs6mc-0 fsLBGq">
+<div class="chat-line--inline chat-line__message" data-a-target="chat-line-message" data-a-user="pop_mokorn" tabindex="0" aria-label="ぽぷもこ: uyuyu2U uyuyu2U" align-items="center">
+<div class="Layout-sc-1xcs6mc-0 AoXTY">
+<div class="Layout-sc-1xcs6mc-0 haALyh chat-line__message-highlight">
+</div>
+<div class="Layout-sc-1xcs6mc-0 AoXTY chat-line__message-container">
+<div class="Layout-sc-1xcs6mc-0">
+</div>
+<div class="Layout-sc-1xcs6mc-0">
+<div class="Layout-sc-1xcs6mc-0 fHdBNk chat-line__no-background">
+<div class="Layout-sc-1xcs6mc-0 dtoOxd">
+<div class="Layout-sc-1xcs6mc-0 nnbce chat-line__username-container chat-line__username-container--hoverable">
+<span>
+<div class="InjectLayout-sc-1i43xsx-0 dvtAVE">
+<button data-a-target="chat-badge">
+<img alt="4ヶ月のサブスクライバー（3か月バッジ）" aria-label="4ヶ月のサブスクライバー（3か月バッジ）バッジ" class="chat-badge" src="https://static-cdn.jtvnw.net/badges/v1/b2df107a-8678-46fb-9767-7a58e1eaf00d/1" tabindex="0" srcset="https://static-cdn.jtvnw.net/badges/v1/b2df107a-8678-46fb-9767-7a58e1eaf00d/1 1x, https://static-cdn.jtvnw.net/badges/v1/b2df107a-8678-46fb-9767-7a58e1eaf00d/2 2x, https://static-cdn.jtvnw.net/badges/v1/b2df107a-8678-46fb-9767-7a58e1eaf00d/3 4x">
+</button>
+</div>
+<div class="InjectLayout-sc-1i43xsx-0 dvtAVE">
+<button data-a-target="chat-badge">
+<img alt="cheer 100" aria-label="cheer 100バッジ" class="chat-badge" src="https://static-cdn.jtvnw.net/badges/v1/09d93036-e7ce-431c-9a9e-7044297133f2/1" tabindex="0" srcset="https://static-cdn.jtvnw.net/badges/v1/09d93036-e7ce-431c-9a9e-7044297133f2/1 1x, https://static-cdn.jtvnw.net/badges/v1/09d93036-e7ce-431c-9a9e-7044297133f2/2 2x, https://static-cdn.jtvnw.net/badges/v1/09d93036-e7ce-431c-9a9e-7044297133f2/3 4x">
+</button>
+</div>
+</span>
+<span class="chat-line__username" role="button" tabindex="0">
+<span>
+<span class="chat-author__display-name" data-a-target="chat-message-username" data-a-user="pop_mokorn" data-test-selector="message-username" style="color: rgb(255, 236, 105);">ぽぷもこ
+</span>
+<span class="chat-author__intl-login" data-test-selector="message-username-canonical" style="color: rgb(255, 236, 105);"> (pop_mokorn)
+</span>
+</span>
+</span>
+</div>
+<span aria-hidden="true">: 
+</span>
+<span class="" data-a-target="chat-line-message-body" dir="auto">
+<div class="chat-line__message--emote-button" data-test-selector="emote-button">
+<div class="InjectLayout-sc-1i43xsx-0 dvtAVE">
+<span data-a-target="emote-name">
+<div class="Layout-sc-1xcs6mc-0 gJnMyS chat-image__container">
+<img alt="uyuyu2U" class="chat-image chat-line__message--emote" src="https://static-cdn.jtvnw.net/emoticons/v2/emotesv2_bd0138851cb84595a822c7484a8d7725/default/dark/1.0" srcset="https://static-cdn.jtvnw.net/emoticons/v2/emotesv2_bd0138851cb84595a822c7484a8d7725/default/dark/1.0 1x,https://static-cdn.jtvnw.net/emoticons/v2/emotesv2_bd0138851cb84595a822c7484a8d7725/default/dark/2.0 2x,https://static-cdn.jtvnw.net/emoticons/v2/emotesv2_bd0138851cb84595a822c7484a8d7725/default/dark/3.0 4x">
+</div>
+</span>
+</div>
+</div>
+<span class="text-fragment" data-a-target="chat-message-text"> 
+</span>
+<div class="chat-line__message--emote-button" data-test-selector="emote-button">
+<div class="InjectLayout-sc-1i43xsx-0 dvtAVE">
+<span data-a-target="emote-name">
+<div class="Layout-sc-1xcs6mc-0 gJnMyS chat-image__container">
+<img alt="uyuyu2U" class="chat-image chat-line__message--emote" src="https://static-cdn.jtvnw.net/emoticons/v2/emotesv2_bd0138851cb84595a822c7484a8d7725/default/dark/1.0" srcset="https://static-cdn.jtvnw.net/emoticons/v2/emotesv2_bd0138851cb84595a822c7484a8d7725/default/dark/1.0 1x,https://static-cdn.jtvnw.net/emoticons/v2/emotesv2_bd0138851cb84595a822c7484a8d7725/default/dark/2.0 2x,https://static-cdn.jtvnw.net/emoticons/v2/emotesv2_bd0138851cb84595a822c7484a8d7725/default/dark/3.0 4x">
+</div>
+</span>
+</div>
+</div>
+</span>
+</div>
+</div>
+</div>
+</div>
+<div class="Layout-sc-1xcs6mc-0 gdGpiT chat-line__icons">
+<div class="Layout-sc-1xcs6mc-0 gphUmh chat-line__reply-icon chat-line__icon">
+<div class="InjectLayout-sc-1i43xsx-0 iDMNUO">
+<button class="ScCoreButton-sc-ocjdkq-0 glPhvE ScButtonIcon-sc-9yap0r-0 dcNXJO InjectLayout-sc-1i43xsx-0" aria-label="クリックすると @ぽぷもこ に返信">
+<div class="ButtonIconFigure-sc-1emm8lf-0 lnTwMD">
+<div class="ScSvgWrapper-sc-wkgzod-0 kccyMt tw-svg">
+<svg width="24" height="24" viewBox="0 0 24 24" focusable="false" aria-hidden="true" role="presentation">
+<path fill-rule="evenodd" d="M7.828 12.207 11.621 16l-1.414 1.414L4 11.207 10.207 5l1.414 1.414-3.793 3.793h5.586a7 7 0 0 1 7 7v2h-2v-2a5 5 0 0 0-5-5H7.828Z" clip-rule="evenodd">
+</path>
+</svg>
+</div>
+</div>
+</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+
+<div class="Layout-sc-1xcs6mc-0"><div class="Layout-sc-1xcs6mc-0"><div class="Layout-sc-1xcs6mc-0 eCiQQE"><div class="Layout-sc-1xcs6mc-0 ijxYla" style="background: var(--color-border-quote);"></div><div data-test-selector="user-notice-line" class="Layout-sc-1xcs6mc-0 eynKOr" style="overflow-wrap: break-word;"><div class="Layout-sc-1xcs6mc-0 fHdBNk"><div class="Layout-sc-1xcs6mc-0 grjXFy">sametaroがみってるよ～を引き換えました<div class="Layout-sc-1xcs6mc-0 dMnClf channel-points-reward-line__icon"><div class="Layout-sc-1xcs6mc-0 liPKTE channel-points-icon channel-points-icon--medium"><img class="channel-points-icon__image" alt="" src="https://static-cdn.jtvnw.net/channel-points-icons/644642707/834eba95-6055-421a-9343-f426a0d56496/icon-1.png" srcset="https://static-cdn.jtvnw.net/channel-points-icons/644642707/834eba95-6055-421a-9343-f426a0d56496/icon-1.png 1x, https://static-cdn.jtvnw.net/channel-points-icons/644642707/834eba95-6055-421a-9343-f426a0d56496/icon-2.png 2x, https://static-cdn.jtvnw.net/channel-points-icons/644642707/834eba95-6055-421a-9343-f426a0d56496/icon-4.png 4x"></div></div>100</div></div></div></div></div></div>
