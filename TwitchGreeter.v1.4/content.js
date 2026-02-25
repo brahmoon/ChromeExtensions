@@ -162,11 +162,11 @@ function applyThemeColor(themeColor) {
   const isLightTheme = panelLightness > 65;
   const textColor = isLightTheme ? '#444444' : mixColor(base, '#ffffff', 0.88);
   const buttonBg = isLightTheme
-    ? adjustColorByHsl(panelBg, 8, -10)
-    : adjustColorByHsl(panelBg, -8, 5);
+    ? adjustColorByHsl(panelBg, -8, -10)
+    : adjustColorByHsl(panelBg, 8, 5);
   const buttonHoverBg = isLightTheme
-    ? adjustColorByHsl(panelBg, 14, -10)
-    : adjustColorByHsl(panelBg, -14, 5);
+    ? adjustColorByHsl(panelBg, -14, -10)
+    : adjustColorByHsl(panelBg, 14, 5);
   const buttonText = isLightTheme ? '#ffffff' : '#f7f3ff';
 
   document.documentElement.style.setProperty('--greeting-panel-bg', panelBg);
