@@ -437,21 +437,79 @@ function insertResetPanel(chatContainer) {
 }
 
 function extractUserIdFromNotice(messageElement) {
-  const text = (messageElement || '').replace(/\s+/g, '');
-  const suffix = 'を引き換えました[0-9]+$';
-
-  if (text.match(suffix) == null) {
+  if (!messageElement) {
     return null;
   }
 
-  const beforeSuffix = text.slice(0, -suffix.length);
-  const lastGaIndex = beforeSuffix.lastIndexOf('が');
+  const noticeText = (messageElement.innerText || '').replace(/\s+/g, '');
 
-  if (lastGaIndex <= 0) {
+  const exchangeMatch = noticeText.match(/^(.*)が.*を引き換えました[0-9]+$/);
+  if (exchangeMatch && exchangeMatch[1]) {
+    return exchangeMatch[1].trim() || null;
+  }
+
+  const rawNoticeText = (messageElement.innerText || '').trim();
+  if (rawNoticeText.includes('サブスクしました')) {
+    const sanGaIndex = rawNoticeText.lastIndexOf('さんが');
+    if (sanGaIndex > 0) {
+      const textBeforeSanGa = rawNoticeText.slice(0, sanGaIndex).trim();
+      const usernameCandidates = textBeforeSanGa
+        .split(/[\s:：!！。]/)
+        .map(part => part.trim())
+        .filter(Boolean);
+
+      if (usernameCandidates.length > 0) {
+        return usernameCandidates[usernameCandidates.length - 1];
+      }
+    }
+  }
+
+  if (!noticeText.includes('連続視聴記録')) {
     return null;
   }
 
-  return beforeSuffix.slice(0, lastGaIndex).trim();
+  const intlLoginElement = messageElement.querySelector('span.intl-login');
+  if (!intlLoginElement || !intlLoginElement.parentNode) {
+    return null;
+  }
+
+  let previousNode = intlLoginElement.previousSibling;
+  while (previousNode) {
+    if (previousNode.nodeType === Node.TEXT_NODE) {
+      const usernameFromText = (previousNode.textContent || '').trim();
+      if (usernameFromText) {
+        return usernameFromText;
+      }
+    }
+
+    if (previousNode.nodeType === Node.ELEMENT_NODE && previousNode.tagName === 'SPAN') {
+      const usernameFromSpan = (previousNode.textContent || '').trim();
+      if (usernameFromSpan) {
+        return usernameFromSpan;
+      }
+    }
+
+    previousNode = previousNode.previousSibling;
+  }
+
+  const parentNode = intlLoginElement.parentNode;
+  if (parentNode && parentNode.childNodes) {
+    const textBeforeIntlLogin = [];
+
+    for (const childNode of parentNode.childNodes) {
+      if (childNode === intlLoginElement) {
+        break;
+      }
+      textBeforeIntlLogin.push((childNode.textContent || '').trim());
+    }
+
+    const fallbackUsername = textBeforeIntlLogin.join('').trim();
+    if (fallbackUsername) {
+      return fallbackUsername;
+    }
+  }
+
+  return null;
 }
 
 
@@ -481,10 +539,24 @@ function ensureDetectedUserTracked(messageElement, userId) {
     return;
   }
 
+  const resolvedUsername = resolveUsernameFromMessage(messageElement, userId);
+  const normalizedUsername = (resolvedUsername || '').trim().toLowerCase();
+
+  const alreadyTrackedSameName = Object.values(greetedUsers).some(user => {
+    if (!user || !user.username) {
+      return false;
+    }
+    return user.username.trim().toLowerCase() === normalizedUsername;
+  });
+
+  if (alreadyTrackedSameName) {
+    return;
+  }
+
   greetedUsers[userId] = {
     greeted: false,
     timestamp: Date.now(),
-    username: resolveUsernameFromMessage(messageElement, userId)
+    username: resolvedUsername
   };
 
   chrome.storage.local.set({ greetedUsers: greetedUsers });
@@ -558,7 +630,7 @@ function addCheckboxToMessage(messageElement) {
   if (messageElement.matches('.chat-line__message')) {
     userId = messageElement.getAttribute('data-a-user');
   } else if (messageElement.matches(NOTICE_SELECTOR)) {
-    userId = extractUserIdFromNotice(messageElement.innerText);
+    userId = extractUserIdFromNotice(messageElement);
   }
 
   if (!userId) return;
