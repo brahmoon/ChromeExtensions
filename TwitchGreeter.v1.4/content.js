@@ -336,6 +336,42 @@ function extractUserIdFromNotice(messageElement) {
   return beforeSuffix.slice(0, lastGaIndex).trim();
 }
 
+
+function resolveUsernameFromMessage(messageElement, userId) {
+  if (messageElement.matches('.chat-line__message')) {
+    const nameElem = messageElement.querySelector('.chat-author__display-name');
+    if (nameElem && nameElem.textContent) {
+      return nameElem.textContent.trim();
+    }
+  }
+
+  if (messageElement.matches(NOTICE_SELECTOR)) {
+    const noticeNameElement = messageElement.querySelector('[data-a-user]');
+    if (noticeNameElement) {
+      const noticeName = noticeNameElement.getAttribute('data-a-user');
+      if (noticeName) {
+        return noticeName.trim();
+      }
+    }
+  }
+
+  return userId;
+}
+
+function ensureDetectedUserTracked(messageElement, userId) {
+  if (!userId || greetedUsers[userId]) {
+    return;
+  }
+
+  greetedUsers[userId] = {
+    greeted: false,
+    timestamp: Date.now(),
+    username: resolveUsernameFromMessage(messageElement, userId)
+  };
+
+  chrome.storage.local.set({ greetedUsers: greetedUsers });
+}
+
 function placeCheckbox(messageElement, checkbox) {
   const timestampElement = messageElement.querySelector('.chat-line__timestamp');
   if (timestampElement && timestampElement.parentNode) {
@@ -409,6 +445,8 @@ function addCheckboxToMessage(messageElement) {
 
   if (!userId) return;
 
+  ensureDetectedUserTracked(messageElement, userId);
+
   const checkbox = document.createElement('span');
   checkbox.className = 'greeting-checkbox';
   checkbox.innerHTML = `
@@ -425,12 +463,10 @@ function addCheckboxToMessage(messageElement) {
     updateUserCheckboxes(userid, isChecked);
 
     if (isChecked) {
-      const nameElem = messageElement.querySelector('.chat-author__display-name');
-      const dispName = nameElem && nameElem.textContent ? nameElem.textContent : userId;
       greetedUsers[userid] = {
         greeted: true,
         timestamp: Date.now(),
-        username: dispName
+        username: resolveUsernameFromMessage(messageElement, userId)
       };
     } else if (greetedUsers[userid]) {
       greetedUsers[userid].greeted = false;
