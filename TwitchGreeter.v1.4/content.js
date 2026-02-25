@@ -11,7 +11,7 @@ let resetPanelState = {
 
 const defaultSettings = {
   extensionEnabled: true,
-  channelScope: 'all',
+  channelScope: 'specific',
   targetChannelId: '',
   themeColor: '#6441a5'
 };
@@ -258,10 +258,6 @@ function insertResetPanel(chatContainer) {
     </div>
   `;
 
-  const dimPanel = () => {
-    panel.classList.add('is-inactive');
-    resetPanelState.dimmed = true;
-  };
 
   const removePanel = () => {
     panelParent.remove();
@@ -298,7 +294,6 @@ function insertResetPanel(chatContainer) {
   panel.querySelector('.greeting-reset-confirm').addEventListener('click', function() {
     if (confirm('挨拶記録をリセットしますか？')) {
       clearGreetings();
-      dimPanel();
     }
   });
 
@@ -336,6 +331,42 @@ function extractUserIdFromNotice(messageElement) {
   return beforeSuffix.slice(0, lastGaIndex).trim();
 }
 
+
+function resolveUsernameFromMessage(messageElement, userId) {
+  if (messageElement.matches('.chat-line__message')) {
+    const nameElem = messageElement.querySelector('.chat-author__display-name');
+    if (nameElem && nameElem.textContent) {
+      return nameElem.textContent.trim();
+    }
+  }
+
+  if (messageElement.matches(NOTICE_SELECTOR)) {
+    const noticeNameElement = messageElement.querySelector('[data-a-user]');
+    if (noticeNameElement) {
+      const noticeName = noticeNameElement.getAttribute('data-a-user');
+      if (noticeName) {
+        return noticeName.trim();
+      }
+    }
+  }
+
+  return userId;
+}
+
+function ensureDetectedUserTracked(messageElement, userId) {
+  if (!userId || greetedUsers[userId]) {
+    return;
+  }
+
+  greetedUsers[userId] = {
+    greeted: false,
+    timestamp: Date.now(),
+    username: resolveUsernameFromMessage(messageElement, userId)
+  };
+
+  chrome.storage.local.set({ greetedUsers: greetedUsers });
+}
+
 function placeCheckbox(messageElement, checkbox) {
   const timestampElement = messageElement.querySelector('.chat-line__timestamp');
   if (timestampElement && timestampElement.parentNode) {
@@ -353,6 +384,10 @@ function placeCheckbox(messageElement, checkbox) {
   if (noticeMessageContainer) {
     noticeMessageContainer.insertBefore(checkbox, noticeMessageContainer.firstChild);
     return;
+  }
+
+  if (messageElement.matches(NOTICE_SELECTOR)) {
+    messageElement.classList.add('greeting-notice-with-checkbox');
   }
 
   messageElement.insertBefore(checkbox, messageElement.firstChild);
@@ -377,7 +412,9 @@ function addCheckboxToMessage(messageElement) {
 
   if (!userId) return;
 
-  const checkbox = document.createElement('div');
+  ensureDetectedUserTracked(messageElement, userId);
+
+  const checkbox = document.createElement('span');
   checkbox.className = 'greeting-checkbox';
   checkbox.innerHTML = `
     <input type="checkbox" id="greeting-${userId}-${Date.now()}"
@@ -393,12 +430,10 @@ function addCheckboxToMessage(messageElement) {
     updateUserCheckboxes(userid, isChecked);
 
     if (isChecked) {
-      const nameElem = messageElement.querySelector('.chat-author__display-name');
-      const dispName = nameElem && nameElem.textContent ? nameElem.textContent : userId;
       greetedUsers[userid] = {
         greeted: true,
         timestamp: Date.now(),
-        username: dispName
+        username: resolveUsernameFromMessage(messageElement, userId)
       };
     } else if (greetedUsers[userid]) {
       greetedUsers[userid].greeted = false;

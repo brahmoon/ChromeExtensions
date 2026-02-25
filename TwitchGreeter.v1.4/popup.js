@@ -1,7 +1,7 @@
 // popup.js
 const defaultSettings = {
   extensionEnabled: true,
-  channelScope: 'all',
+  channelScope: 'specific',
   targetChannelId: '',
   themeColor: '#6441a5'
 };
@@ -37,10 +37,25 @@ function mixWithWhite(hex, ratio) {
   });
 }
 
+
+function darkenColor(hex, ratio) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return '#ddd8e8';
+  const factor = Math.max(0, 1 - ratio);
+  return rgbToHex({
+    r: rgb.r * factor,
+    g: rgb.g * factor,
+    b: rgb.b * factor
+  });
+}
+
 function applyThemeColor(themeColor) {
   const normalized = normalizeHexColor(themeColor) || '#6441a5';
   const pastelBg = mixWithWhite(normalized, 0.88);
+  const bottomControlsBg = darkenColor(pastelBg, 0.2);
+
   document.documentElement.style.setProperty('--popup-bg-color', pastelBg);
+  document.documentElement.style.setProperty('--popup-bottom-controls-bg', bottomControlsBg);
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -61,15 +76,58 @@ document.addEventListener('DOMContentLoaded', function() {
     enabledToggle.checked = enabled;
   }
 
-  function notifyActiveTab() {
-    chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
-      if (tabs[0]) {
-        chrome.tabs.sendMessage(tabs[0].id, { action: 'settingsChanged' }, function() {
+  function sendMessageToTwitchTabs(message) {
+    chrome.tabs.query({ url: ['*://*.twitch.tv/*'] }, function(tabs) {
+      tabs.forEach(tab => {
+        if (!tab.id) return;
+
+        chrome.tabs.sendMessage(tab.id, message, function() {
           if (chrome.runtime.lastError) {
-            console.warn('設定通知に失敗:', chrome.runtime.lastError.message);
+            console.warn('Twitchタブ通知に失敗:', chrome.runtime.lastError.message);
           }
         });
+      });
+    });
+  }
+
+  function notifyFeatureStateChanged() {
+    sendMessageToTwitchTabs({ action: 'settingsChanged' });
+  }
+
+  function notifyImmediateActivationIfMatched(channelId) {
+    const trimmed = (channelId || '').trim().toLowerCase();
+    if (!trimmed) {
+      notifyFeatureStateChanged();
+      return;
+    }
+
+    chrome.tabs.query({ active: true, lastFocusedWindow: true, url: ['*://*.twitch.tv/*'] }, function(tabs) {
+      const activeTwitchTab = tabs[0];
+      if (!activeTwitchTab || !activeTwitchTab.id || !activeTwitchTab.url) {
+        notifyFeatureStateChanged();
+        return;
       }
+
+      let pathChannel = '';
+      try {
+        const url = new URL(activeTwitchTab.url);
+        const parts = url.pathname.split('/').filter(Boolean);
+        pathChannel = (parts[0] === 'popout' ? parts[1] : parts[0] || '').toLowerCase();
+      } catch (error) {
+        notifyFeatureStateChanged();
+        return;
+      }
+
+      if (pathChannel === trimmed) {
+        chrome.tabs.sendMessage(activeTwitchTab.id, { action: 'settingsChanged' }, function() {
+          if (chrome.runtime.lastError) {
+            console.warn('即時反映通知に失敗:', chrome.runtime.lastError.message);
+          }
+        });
+        return;
+      }
+
+      notifyFeatureStateChanged();
     });
   }
 
@@ -83,7 +141,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function saveThemeColor(themeColor) {
     chrome.storage.local.set({ themeColor: themeColor }, function() {
-      notifyActiveTab();
+      notifyFeatureStateChanged();
     });
   }
 
@@ -151,18 +209,10 @@ document.addEventListener('DOMContentLoaded', function() {
               }
 
               chrome.storage.local.set({ greetedUsers: updatedUsers }, function() {
-                chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
-                  if (tabs[0]) {
-                    chrome.tabs.sendMessage(tabs[0].id, {
-                      action: 'updateGreetedStatus',
-                      userId: userid,
-                      greeted: isChecked
-                    }, function() {
-                      if (chrome.runtime.lastError) {
-                        console.error('メッセージ送信エラー:', chrome.runtime.lastError.message);
-                      }
-                    });
-                  }
+                sendMessageToTwitchTabs({
+                  action: 'updateGreetedStatus',
+                  userId: userid,
+                  greeted: isChecked
                 });
               });
             }
@@ -179,13 +229,20 @@ document.addEventListener('DOMContentLoaded', function() {
     updateChannelIdVisibility(scope);
 
     chrome.storage.local.set({ channelScope: scope }, function() {
-      notifyActiveTab();
+      notifyFeatureStateChanged();
     });
   });
 
   channelIdInput.addEventListener('input', function() {
-    chrome.storage.local.set({ targetChannelId: this.value.trim() }, function() {
-      notifyActiveTab();
+    const channelId = this.value.trim();
+
+    chrome.storage.local.set({ targetChannelId: channelId }, function() {
+      if (channelScopeSelect.value === 'specific') {
+        notifyImmediateActivationIfMatched(channelId);
+        return;
+      }
+
+      notifyFeatureStateChanged();
     });
   });
 
@@ -194,7 +251,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     chrome.storage.local.set({ extensionEnabled: enabled }, function() {
       applyEnabledState(enabled);
-      notifyActiveTab();
+      notifyFeatureStateChanged();
     });
   });
 
@@ -235,23 +292,19 @@ document.addEventListener('DOMContentLoaded', function() {
       chrome.storage.local.set({ greetedUsers: {} }, function() {
         loadGreetedUsers();
 
-        chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
-          if (tabs[0]) {
-            chrome.tabs.sendMessage(tabs[0].id, {
-              action: 'resetAllGreetings'
-            }, function() {
-              if (chrome.runtime.lastError) {
-                console.error('リセットメッセージ送信エラー:', chrome.runtime.lastError.message);
-              }
-            });
-          }
-        });
+        sendMessageToTwitchTabs({ action: 'resetAllGreetings' });
       });
     }
   });
 
   chrome.runtime.onMessage.addListener(function(message) {
     if (message.action === 'updateGreetedStatus') {
+      loadGreetedUsers();
+    }
+  });
+
+  chrome.storage.onChanged.addListener(function(changes, areaName) {
+    if (areaName === 'local' && changes.greetedUsers) {
       loadGreetedUsers();
     }
   });
