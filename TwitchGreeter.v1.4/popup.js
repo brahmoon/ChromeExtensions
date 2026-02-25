@@ -299,9 +299,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
             if (updatedUsers[userid]) {
               updatedUsers[userid].greeted = isChecked;
-              if (isChecked) {
-                updatedUsers[userid].timestamp = Date.now();
-              }
 
               chrome.storage.local.set({ greetedUsers: updatedUsers }, function() {
                 sendMessageToTwitchTabs({
