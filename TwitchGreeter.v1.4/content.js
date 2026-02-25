@@ -398,6 +398,34 @@ function placeCheckbox(messageElement, checkbox) {
   messageElement.insertBefore(checkbox, messageElement.firstChild);
 }
 
+function placeCheckboxForNoticeMessage(messageElement, checkbox) {
+  const noticeMessageContainer = messageElement.querySelector('[data-test-selector="user-notice-line-message"]');
+  if (!noticeMessageContainer) {
+    placeCheckbox(messageElement, checkbox);
+    return;
+  }
+
+  const textNodeWalker = document.createTreeWalker(
+    noticeMessageContainer,
+    NodeFilter.SHOW_TEXT,
+    {
+      acceptNode(node) {
+        return node.textContent && node.textContent.trim().length > 0
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_REJECT;
+      }
+    }
+  );
+
+  const firstTextNode = textNodeWalker.nextNode();
+  if (firstTextNode && firstTextNode.parentNode) {
+    firstTextNode.parentNode.insertBefore(checkbox, firstTextNode);
+    return;
+  }
+
+  noticeMessageContainer.insertBefore(checkbox, noticeMessageContainer.firstChild);
+}
+
 function addCheckboxToMessage(messageElement) {
   if (!isFeatureActiveOnCurrentPage()) {
     return;
@@ -446,6 +474,11 @@ function addCheckboxToMessage(messageElement) {
 
     chrome.storage.local.set({ greetedUsers: greetedUsers });
   });
+
+  if (messageElement.matches(NOTICE_SELECTOR)) {
+    placeCheckboxForNoticeMessage(messageElement, checkbox);
+    return;
+  }
 
   placeCheckbox(messageElement, checkbox);
 }
