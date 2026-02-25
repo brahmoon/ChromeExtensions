@@ -37,10 +37,25 @@ function mixWithWhite(hex, ratio) {
   });
 }
 
+
+function darkenColor(hex, ratio) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return '#ddd8e8';
+  const factor = Math.max(0, 1 - ratio);
+  return rgbToHex({
+    r: rgb.r * factor,
+    g: rgb.g * factor,
+    b: rgb.b * factor
+  });
+}
+
 function applyThemeColor(themeColor) {
   const normalized = normalizeHexColor(themeColor) || '#6441a5';
   const pastelBg = mixWithWhite(normalized, 0.88);
+  const bottomControlsBg = darkenColor(pastelBg, 0.2);
+
   document.documentElement.style.setProperty('--popup-bg-color', pastelBg);
+  document.documentElement.style.setProperty('--popup-bottom-controls-bg', bottomControlsBg);
 }
 
 document.addEventListener('DOMContentLoaded', function() {
