@@ -319,10 +319,10 @@ function insertResetPanel(chatContainer) {
 }
 
 function extractUserIdFromNotice(messageElement) {
-  const text = (messageElement.textContent || '').replace(/\s+/g, ' ').trim();
-  const suffix = 'を引き換えました';
+  const text = (messageElement || '').replace(/\s+/g, '');
+  const suffix = 'を引き換えました[0-9]+$';
 
-  if (!text.endsWith(suffix)) {
+  if (text.match(suffix) == null) {
     return null;
   }
 
@@ -372,7 +372,8 @@ function addCheckboxToMessage(messageElement) {
   if (messageElement.matches('.chat-line__message')) {
     userId = messageElement.getAttribute('data-a-user');
   } else if (messageElement.matches(NOTICE_SELECTOR)) {
-    userId = extractUserIdFromNotice(messageElement);
+    console.log(messageElement.innerText)
+    userId = extractUserIdFromNotice(messageElement.innerText);
   }
 
   if (!userId) return;
