@@ -7,11 +7,12 @@
     body {
       width: 350px;
       font-family: Arial, sans-serif;
-      padding: 10px;
+      padding: 10px 10px 86px;
       position: relative;
       min-height: 470px;
       box-sizing: border-box;
       background: var(--popup-bg-color, #f7f3ff);
+      margin: 0;
     }
 
     h1 {
@@ -153,10 +154,25 @@
       background-color: #d32f2f;
     }
 
+    .popup-bottom-controls {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px;
+      box-sizing: border-box;
+      background: rgba(247, 243, 255, 0.96);
+      border-top: 1px solid rgba(0, 0, 0, 0.1);
+      backdrop-filter: blur(2px);
+    }
+
+    .theme-color-setting,
     .feature-toggle {
-      position: absolute;
-      right: 10px;
-      bottom: 10px;
       display: flex;
       align-items: center;
       gap: 8px;
@@ -164,21 +180,17 @@
     }
 
     .theme-color-setting {
-      position: absolute;
-      left: 10px;
-      bottom: 10px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 13px;
-      right: 90px;
-      width: auto;
-      max-width: calc(100% - 180px);
+      min-width: 0;
+      flex: 1;
     }
 
     .theme-color-setting label {
       font-weight: bold;
       white-space: nowrap;
+    }
+
+    .feature-toggle {
+      flex-shrink: 0;
     }
 
     .switch {
@@ -236,8 +248,8 @@
       <div class="setting-row">
         <label for="channelScope">有効化するチャンネル：</label>
         <select id="channelScope">
-          <option value="all">すべてのチャンネル</option>
           <option value="specific">特定のチャンネル</option>
+          <option value="all">すべてのチャンネル</option>
         </select>
       </div>
       <div class="setting-row" id="channelIdRow">
@@ -255,19 +267,21 @@
     </div>
   </div>
 
-  <div class="theme-color-setting">
-    <label for="themeColorInput">テーマ</label>
-    <span class="color-preview" id="themeColorPreview" title="クリックして色を選択"></span>
-    <input type="text" id="themeColorInput" placeholder="#6441a5" maxlength="7">
-    <input type="color" id="themeColorPicker" value="#6441a5">
-  </div>
+  <div class="popup-bottom-controls">
+    <div class="theme-color-setting">
+      <label for="themeColorInput">テーマ</label>
+      <span class="color-preview" id="themeColorPreview" title="クリックして色を選択"></span>
+      <input type="text" id="themeColorInput" placeholder="#6441a5" maxlength="7">
+      <input type="color" id="themeColorPicker" value="#6441a5">
+    </div>
 
-  <div class="feature-toggle">
-    <span>有効化：</span>
-    <label class="switch">
-      <input type="checkbox" id="enabledToggle" checked>
-      <span class="slider"></span>
-    </label>
+    <div class="feature-toggle">
+      <span>有効化：</span>
+      <label class="switch">
+        <input type="checkbox" id="enabledToggle" checked>
+        <span class="slider"></span>
+      </label>
+    </div>
   </div>
 
   <script src="popup.js"></script>
