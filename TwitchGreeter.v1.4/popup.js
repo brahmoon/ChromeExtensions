@@ -38,21 +38,105 @@ function mixWithWhite(hex, ratio) {
 }
 
 
-function darkenColor(hex, ratio) {
+function rgbToHsl({ r, g, b }) {
+  const red = r / 255;
+  const green = g / 255;
+  const blue = b / 255;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const delta = max - min;
+
+  let h = 0;
+  let s = 0;
+  const l = (max + min) / 2;
+
+  if (delta !== 0) {
+    s = delta / (1 - Math.abs(2 * l - 1));
+
+    switch (max) {
+      case red:
+        h = ((green - blue) / delta) % 6;
+        break;
+      case green:
+        h = (blue - red) / delta + 2;
+        break;
+      default:
+        h = (red - green) / delta + 4;
+        break;
+    }
+
+    h *= 60;
+    if (h < 0) {
+      h += 360;
+    }
+  }
+
+  return { h, s: s * 100, l: l * 100 };
+}
+
+function hslToRgb({ h, s, l }) {
+  const hue = ((h % 360) + 360) % 360;
+  const saturation = Math.max(0, Math.min(100, s)) / 100;
+  const lightness = Math.max(0, Math.min(100, l)) / 100;
+
+  if (saturation === 0) {
+    const gray = lightness * 255;
+    return { r: gray, g: gray, b: gray };
+  }
+
+  const c = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = lightness - c / 2;
+
+  let r1 = 0;
+  let g1 = 0;
+  let b1 = 0;
+
+  if (hue < 60) {
+    r1 = c;
+    g1 = x;
+  } else if (hue < 120) {
+    r1 = x;
+    g1 = c;
+  } else if (hue < 180) {
+    g1 = c;
+    b1 = x;
+  } else if (hue < 240) {
+    g1 = x;
+    b1 = c;
+  } else if (hue < 300) {
+    r1 = x;
+    b1 = c;
+  } else {
+    r1 = c;
+    b1 = x;
+  }
+
+  return {
+    r: (r1 + m) * 255,
+    g: (g1 + m) * 255,
+    b: (b1 + m) * 255
+  };
+}
+
+function adjustColorByHsl(hex, lightnessDelta, saturationDelta) {
   const rgb = hexToRgb(hex);
   if (!rgb) return '#ddd8e8';
-  const factor = Math.max(0, 1 - ratio);
-  return rgbToHex({
-    r: rgb.r * factor,
-    g: rgb.g * factor,
-    b: rgb.b * factor
-  });
+
+  const hsl = rgbToHsl(rgb);
+  const adjusted = {
+    h: hsl.h,
+    s: Math.max(0, Math.min(100, hsl.s + saturationDelta)),
+    l: Math.max(0, Math.min(100, hsl.l + lightnessDelta))
+  };
+
+  return rgbToHex(hslToRgb(adjusted));
 }
 
 function applyThemeColor(themeColor) {
   const normalized = normalizeHexColor(themeColor) || '#6441a5';
   const pastelBg = mixWithWhite(normalized, 0.88);
-  const bottomControlsBg = darkenColor(pastelBg, 0.2);
+  const bottomControlsBg = adjustColorByHsl(pastelBg, -10, 5);
 
   document.documentElement.style.setProperty('--popup-bg-color', pastelBg);
   document.documentElement.style.setProperty('--popup-bottom-controls-bg', bottomControlsBg);
