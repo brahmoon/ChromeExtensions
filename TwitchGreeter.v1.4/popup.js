@@ -160,16 +160,31 @@ document.addEventListener('DOMContentLoaded', function() {
     enabledToggle.checked = enabled;
   }
 
+  function isMissingReceiverError(errorMessage) {
+    return (errorMessage || '').includes('Could not establish connection. Receiving end does not exist.');
+  }
+
+  function sendMessageToTab(tabId, message, warningPrefix) {
+    chrome.tabs.sendMessage(tabId, message, function() {
+      if (!chrome.runtime.lastError) {
+        return;
+      }
+
+      const errorMessage = chrome.runtime.lastError.message || '';
+      if (isMissingReceiverError(errorMessage)) {
+        console.debug(`${warningPrefix}: ${errorMessage}`);
+        return;
+      }
+
+      console.warn(`${warningPrefix}: ${errorMessage}`);
+    });
+  }
+
   function sendMessageToTwitchTabs(message) {
     chrome.tabs.query({ url: ['*://*.twitch.tv/*'] }, function(tabs) {
       tabs.forEach(tab => {
         if (!tab.id) return;
-
-        chrome.tabs.sendMessage(tab.id, message, function() {
-          if (chrome.runtime.lastError) {
-            console.warn('Twitchタブ通知に失敗:', chrome.runtime.lastError.message);
-          }
-        });
+        sendMessageToTab(tab.id, message, 'Twitchタブ通知に失敗');
       });
     });
   }
@@ -203,11 +218,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
 
       if (pathChannel === trimmed) {
-        chrome.tabs.sendMessage(activeTwitchTab.id, { action: 'settingsChanged' }, function() {
-          if (chrome.runtime.lastError) {
-            console.warn('即時反映通知に失敗:', chrome.runtime.lastError.message);
-          }
-        });
+        sendMessageToTab(activeTwitchTab.id, { action: 'settingsChanged' }, '即時反映通知に失敗');
         return;
       }
 

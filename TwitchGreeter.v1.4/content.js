@@ -188,6 +188,22 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
   return true;
 });
 
+
+chrome.storage.onChanged.addListener(function(changes, areaName) {
+  if (areaName !== 'local') {
+    return;
+  }
+
+  if (changes.greetedUsers) {
+    greetedUsers = changes.greetedUsers.newValue || {};
+    applyGreetedStatus();
+  }
+
+  if (changes.themeColor || changes.extensionEnabled || changes.channelScope || changes.targetChannelId) {
+    loadSettingsAndApply();
+  }
+});
+
 const NOTICE_SELECTOR = 'div[data-test-selector="user-notice-line"], .user-notice-line';
 
 function collectMessageTargets(rootElement) {
