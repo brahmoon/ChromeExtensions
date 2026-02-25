@@ -76,10 +76,6 @@
   background: rgba(255, 255, 255, 0.15);
 }
 
-.greeting-reset-panel.is-inactive {
-  background: #3f3f3f;
-  border-color: #575757;
-}
 
 .greeting-reset-label {
   font-size: 12px;

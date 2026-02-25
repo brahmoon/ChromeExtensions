@@ -258,10 +258,6 @@ function insertResetPanel(chatContainer) {
     </div>
   `;
 
-  const dimPanel = () => {
-    panel.classList.add('is-inactive');
-    resetPanelState.dimmed = true;
-  };
 
   const removePanel = () => {
     panelParent.remove();
@@ -298,7 +294,6 @@ function insertResetPanel(chatContainer) {
   panel.querySelector('.greeting-reset-confirm').addEventListener('click', function() {
     if (confirm('挨拶記録をリセットしますか？')) {
       clearGreetings();
-      dimPanel();
     }
   });
 
