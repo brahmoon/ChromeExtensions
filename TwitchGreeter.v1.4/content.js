@@ -167,7 +167,9 @@ function applyThemeColor(themeColor) {
   const buttonHoverBg = isLightTheme
     ? adjustColorByHsl(panelBg, 14, -10)
     : adjustColorByHsl(panelBg, -14, 5);
-  const buttonText = isLightTheme ? '#ffffff' : '#f7f3ff';
+  const buttonText = isLightTheme && getLightness(buttonBg) >= 75
+    ? '#444444'
+    : (isLightTheme ? '#ffffff' : '#f7f3ff');
 
   document.documentElement.style.setProperty('--greeting-panel-bg', panelBg);
   document.documentElement.style.setProperty('--greeting-panel-border', panelBorder);
