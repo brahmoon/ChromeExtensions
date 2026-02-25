@@ -10,6 +10,17 @@
   transform: scale(1.2);
 }
 
+.greeting-notice-with-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.greeting-notice-with-checkbox .greeting-checkbox {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
 .greeting-reset-panel {
   position: relative;
   background: var(--greeting-panel-bg, #5f4b8b);

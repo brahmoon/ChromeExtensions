@@ -355,6 +355,10 @@ function placeCheckbox(messageElement, checkbox) {
     return;
   }
 
+  if (messageElement.matches(NOTICE_SELECTOR)) {
+    messageElement.classList.add('greeting-notice-with-checkbox');
+  }
+
   messageElement.insertBefore(checkbox, messageElement.firstChild);
 }
 
