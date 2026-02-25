@@ -442,6 +442,12 @@ function extractUserIdFromNotice(messageElement) {
   }
 
   const noticeText = (messageElement.innerText || '').replace(/\s+/g, '');
+
+  const exchangeMatch = noticeText.match(/^(.*)が.*を引き換えました[0-9]+$/);
+  if (exchangeMatch && exchangeMatch[1]) {
+    return exchangeMatch[1].trim() || null;
+  }
+
   if (!noticeText.includes('連続視聴記録')) {
     return null;
   }
