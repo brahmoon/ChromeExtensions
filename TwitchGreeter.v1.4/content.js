@@ -448,6 +448,22 @@ function extractUserIdFromNotice(messageElement) {
     return exchangeMatch[1].trim() || null;
   }
 
+  const rawNoticeText = (messageElement.innerText || '').trim();
+  if (rawNoticeText.includes('サブスクしました')) {
+    const sanGaIndex = rawNoticeText.lastIndexOf('さんが');
+    if (sanGaIndex > 0) {
+      const textBeforeSanGa = rawNoticeText.slice(0, sanGaIndex).trim();
+      const usernameCandidates = textBeforeSanGa
+        .split(/[\s:：!！。]/)
+        .map(part => part.trim())
+        .filter(Boolean);
+
+      if (usernameCandidates.length > 0) {
+        return usernameCandidates[usernameCandidates.length - 1];
+      }
+    }
+  }
+
   if (!noticeText.includes('連続視聴記録')) {
     return null;
   }
@@ -523,10 +539,24 @@ function ensureDetectedUserTracked(messageElement, userId) {
     return;
   }
 
+  const resolvedUsername = resolveUsernameFromMessage(messageElement, userId);
+  const normalizedUsername = (resolvedUsername || '').trim().toLowerCase();
+
+  const alreadyTrackedSameName = Object.values(greetedUsers).some(user => {
+    if (!user || !user.username) {
+      return false;
+    }
+    return user.username.trim().toLowerCase() === normalizedUsername;
+  });
+
+  if (alreadyTrackedSameName) {
+    return;
+  }
+
   greetedUsers[userId] = {
     greeted: false,
     timestamp: Date.now(),
-    username: resolveUsernameFromMessage(messageElement, userId)
+    username: resolvedUsername
   };
 
   chrome.storage.local.set({ greetedUsers: greetedUsers });
