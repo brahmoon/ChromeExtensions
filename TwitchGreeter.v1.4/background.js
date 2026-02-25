@@ -35,3 +35,27 @@ chrome.action.onClicked.addListener(() => {
     });
   });
 });
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || message.action !== 'openPopupWindow') {
+    return;
+  }
+
+  focusExistingPopupWindow(found => {
+    if (found) {
+      sendResponse({ opened: true, reused: true });
+      return;
+    }
+
+    chrome.windows.create({
+      url: POPUP_WINDOW_URL,
+      type: 'popup',
+      width: POPUP_WINDOW_WIDTH,
+      height: POPUP_WINDOW_HEIGHT
+    }, () => {
+      sendResponse({ opened: true, reused: false });
+    });
+  });
+
+  return true;
+});
