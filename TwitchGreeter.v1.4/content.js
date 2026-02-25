@@ -11,7 +11,7 @@ let resetPanelState = {
 
 const defaultSettings = {
   extensionEnabled: true,
-  channelScope: 'all',
+  channelScope: 'specific',
   targetChannelId: '',
   themeColor: '#6441a5'
 };
@@ -49,6 +49,100 @@ function getLightness(hex) {
   return ((max + min) / 2) * 100;
 }
 
+
+function rgbToHsl({ r, g, b }) {
+  const red = r / 255;
+  const green = g / 255;
+  const blue = b / 255;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const delta = max - min;
+
+  let h = 0;
+  let s = 0;
+  const l = (max + min) / 2;
+
+  if (delta !== 0) {
+    s = delta / (1 - Math.abs(2 * l - 1));
+
+    switch (max) {
+      case red:
+        h = ((green - blue) / delta) % 6;
+        break;
+      case green:
+        h = (blue - red) / delta + 2;
+        break;
+      default:
+        h = (red - green) / delta + 4;
+        break;
+    }
+
+    h *= 60;
+    if (h < 0) {
+      h += 360;
+    }
+  }
+
+  return { h, s: s * 100, l: l * 100 };
+}
+
+function hslToRgb({ h, s, l }) {
+  const hue = ((h % 360) + 360) % 360;
+  const saturation = Math.max(0, Math.min(100, s)) / 100;
+  const lightness = Math.max(0, Math.min(100, l)) / 100;
+
+  if (saturation === 0) {
+    const gray = lightness * 255;
+    return { r: gray, g: gray, b: gray };
+  }
+
+  const c = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = lightness - c / 2;
+
+  let r1 = 0;
+  let g1 = 0;
+  let b1 = 0;
+
+  if (hue < 60) {
+    r1 = c;
+    g1 = x;
+  } else if (hue < 120) {
+    r1 = x;
+    g1 = c;
+  } else if (hue < 180) {
+    g1 = c;
+    b1 = x;
+  } else if (hue < 240) {
+    g1 = x;
+    b1 = c;
+  } else if (hue < 300) {
+    r1 = x;
+    b1 = c;
+  } else {
+    r1 = c;
+    b1 = x;
+  }
+
+  return {
+    r: (r1 + m) * 255,
+    g: (g1 + m) * 255,
+    b: (b1 + m) * 255
+  };
+}
+
+function adjustColorByHsl(hex, lightnessDelta, saturationDelta) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return '#5f4b8b';
+
+  const hsl = rgbToHsl(rgb);
+  return rgbToHex(hslToRgb({
+    h: hsl.h,
+    s: Math.max(0, Math.min(100, hsl.s + saturationDelta)),
+    l: Math.max(0, Math.min(100, hsl.l + lightnessDelta))
+  }));
+}
+
 function mixColor(hexA, hexB, ratio) {
   const a = hexToRgb(hexA);
   const b = hexToRgb(hexB);
@@ -67,8 +161,12 @@ function applyThemeColor(themeColor) {
   const panelLightness = getLightness(panelBg);
   const isLightTheme = panelLightness > 65;
   const textColor = isLightTheme ? '#444444' : mixColor(base, '#ffffff', 0.88);
-  const buttonBg = isLightTheme ? mixColor(panelBg, '#000000', 0.28) : mixColor(panelBg, '#ffffff', 0.2);
-  const buttonHoverBg = isLightTheme ? mixColor(panelBg, '#000000', 0.4) : mixColor(panelBg, '#ffffff', 0.3);
+  const buttonBg = isLightTheme
+    ? adjustColorByHsl(panelBg, 8, -10)
+    : adjustColorByHsl(panelBg, -8, 5);
+  const buttonHoverBg = isLightTheme
+    ? adjustColorByHsl(panelBg, 14, -10)
+    : adjustColorByHsl(panelBg, -14, 5);
   const buttonText = isLightTheme ? '#ffffff' : '#f7f3ff';
 
   document.documentElement.style.setProperty('--greeting-panel-bg', panelBg);
@@ -188,6 +286,22 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
   return true;
 });
 
+
+chrome.storage.onChanged.addListener(function(changes, areaName) {
+  if (areaName !== 'local') {
+    return;
+  }
+
+  if (changes.greetedUsers) {
+    greetedUsers = changes.greetedUsers.newValue || {};
+    applyGreetedStatus();
+  }
+
+  if (changes.themeColor || changes.extensionEnabled || changes.channelScope || changes.targetChannelId) {
+    loadSettingsAndApply();
+  }
+});
+
 const NOTICE_SELECTOR = 'div[data-test-selector="user-notice-line"], .user-notice-line';
 
 function collectMessageTargets(rootElement) {
@@ -258,10 +372,6 @@ function insertResetPanel(chatContainer) {
     </div>
   `;
 
-  const dimPanel = () => {
-    panel.classList.add('is-inactive');
-    resetPanelState.dimmed = true;
-  };
 
   const removePanel = () => {
     panelParent.remove();
@@ -298,7 +408,6 @@ function insertResetPanel(chatContainer) {
   panel.querySelector('.greeting-reset-confirm').addEventListener('click', function() {
     if (confirm('挨拶記録をリセットしますか？')) {
       clearGreetings();
-      dimPanel();
     }
   });
 
@@ -336,6 +445,42 @@ function extractUserIdFromNotice(messageElement) {
   return beforeSuffix.slice(0, lastGaIndex).trim();
 }
 
+
+function resolveUsernameFromMessage(messageElement, userId) {
+  if (messageElement.matches('.chat-line__message')) {
+    const nameElem = messageElement.querySelector('.chat-author__display-name');
+    if (nameElem && nameElem.textContent) {
+      return nameElem.textContent.trim();
+    }
+  }
+
+  if (messageElement.matches(NOTICE_SELECTOR)) {
+    const noticeNameElement = messageElement.querySelector('[data-a-user]');
+    if (noticeNameElement) {
+      const noticeName = noticeNameElement.getAttribute('data-a-user');
+      if (noticeName) {
+        return noticeName.trim();
+      }
+    }
+  }
+
+  return userId;
+}
+
+function ensureDetectedUserTracked(messageElement, userId) {
+  if (!userId || greetedUsers[userId]) {
+    return;
+  }
+
+  greetedUsers[userId] = {
+    greeted: false,
+    timestamp: Date.now(),
+    username: resolveUsernameFromMessage(messageElement, userId)
+  };
+
+  chrome.storage.local.set({ greetedUsers: greetedUsers });
+}
+
 function placeCheckbox(messageElement, checkbox) {
   const timestampElement = messageElement.querySelector('.chat-line__timestamp');
   if (timestampElement && timestampElement.parentNode) {
@@ -353,6 +498,10 @@ function placeCheckbox(messageElement, checkbox) {
   if (noticeMessageContainer) {
     noticeMessageContainer.insertBefore(checkbox, noticeMessageContainer.firstChild);
     return;
+  }
+
+  if (messageElement.matches(NOTICE_SELECTOR)) {
+    messageElement.classList.add('greeting-notice-with-checkbox');
   }
 
   messageElement.insertBefore(checkbox, messageElement.firstChild);
@@ -377,7 +526,9 @@ function addCheckboxToMessage(messageElement) {
 
   if (!userId) return;
 
-  const checkbox = document.createElement('div');
+  ensureDetectedUserTracked(messageElement, userId);
+
+  const checkbox = document.createElement('span');
   checkbox.className = 'greeting-checkbox';
   checkbox.innerHTML = `
     <input type="checkbox" id="greeting-${userId}-${Date.now()}"
@@ -393,12 +544,10 @@ function addCheckboxToMessage(messageElement) {
     updateUserCheckboxes(userid, isChecked);
 
     if (isChecked) {
-      const nameElem = messageElement.querySelector('.chat-author__display-name');
-      const dispName = nameElem && nameElem.textContent ? nameElem.textContent : userId;
       greetedUsers[userid] = {
         greeted: true,
         timestamp: Date.now(),
-        username: dispName
+        username: resolveUsernameFromMessage(messageElement, userId)
       };
     } else if (greetedUsers[userid]) {
       greetedUsers[userid].greeted = false;
