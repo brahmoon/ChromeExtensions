@@ -453,17 +453,44 @@ function extractUserIdFromNotice(messageElement) {
   }
 
   const intlLoginElement = messageElement.querySelector('span.intl-login');
-  if (!intlLoginElement || !intlLoginElement.parentElement) {
+  if (!intlLoginElement || !intlLoginElement.parentNode) {
     return null;
   }
 
-  let previousSpan = intlLoginElement.previousElementSibling;
-  while (previousSpan) {
-    if (previousSpan.tagName === 'SPAN') {
-      const username = (previousSpan.textContent || '').trim();
-      return username || null;
+  let previousNode = intlLoginElement.previousSibling;
+  while (previousNode) {
+    if (previousNode.nodeType === Node.TEXT_NODE) {
+      const usernameFromText = (previousNode.textContent || '').trim();
+      if (usernameFromText) {
+        return usernameFromText;
+      }
     }
-    previousSpan = previousSpan.previousElementSibling;
+
+    if (previousNode.nodeType === Node.ELEMENT_NODE && previousNode.tagName === 'SPAN') {
+      const usernameFromSpan = (previousNode.textContent || '').trim();
+      if (usernameFromSpan) {
+        return usernameFromSpan;
+      }
+    }
+
+    previousNode = previousNode.previousSibling;
+  }
+
+  const parentNode = intlLoginElement.parentNode;
+  if (parentNode && parentNode.childNodes) {
+    const textBeforeIntlLogin = [];
+
+    for (const childNode of parentNode.childNodes) {
+      if (childNode === intlLoginElement) {
+        break;
+      }
+      textBeforeIntlLogin.push((childNode.textContent || '').trim());
+    }
+
+    const fallbackUsername = textBeforeIntlLogin.join('').trim();
+    if (fallbackUsername) {
+      return fallbackUsername;
+    }
   }
 
   return null;
