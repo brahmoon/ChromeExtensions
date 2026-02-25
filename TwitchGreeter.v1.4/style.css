@@ -1,5 +1,6 @@
 .greeting-checkbox {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   margin-right: 5px;
   vertical-align: middle;
 }
@@ -7,6 +8,17 @@
 .greeting-checkbox input {
   cursor: pointer;
   transform: scale(1.2);
+}
+
+.greeting-notice-with-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.greeting-notice-with-checkbox .greeting-checkbox {
+  margin-top: 2px;
+  flex-shrink: 0;
 }
 
 .greeting-reset-panel {
@@ -92,4 +104,3 @@
 .greeting-reset-button:hover {
   background: var(--greeting-reset-button-hover-bg, rgba(255, 255, 255, 0.3));
 }
-

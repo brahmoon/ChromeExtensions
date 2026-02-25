@@ -355,6 +355,10 @@ function placeCheckbox(messageElement, checkbox) {
     return;
   }
 
+  if (messageElement.matches(NOTICE_SELECTOR)) {
+    messageElement.classList.add('greeting-notice-with-checkbox');
+  }
+
   messageElement.insertBefore(checkbox, messageElement.firstChild);
 }
 
@@ -377,7 +381,7 @@ function addCheckboxToMessage(messageElement) {
 
   if (!userId) return;
 
-  const checkbox = document.createElement('div');
+  const checkbox = document.createElement('span');
   checkbox.className = 'greeting-checkbox';
   checkbox.innerHTML = `
     <input type="checkbox" id="greeting-${userId}-${Date.now()}"
