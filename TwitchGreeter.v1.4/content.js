@@ -437,21 +437,36 @@ function insertResetPanel(chatContainer) {
 }
 
 function extractUserIdFromNotice(messageElement) {
-  const text = (messageElement || '').replace(/\s+/g, '');
-  const suffix = 'を引き換えました[0-9]+$';
-
-  if (text.match(suffix) == null) {
+  if (!messageElement) {
     return null;
   }
 
-  const beforeSuffix = text.slice(0, -suffix.length);
-  const lastGaIndex = beforeSuffix.lastIndexOf('が');
+  const noticeText = (messageElement.innerText || '').replace(/\s+/g, '');
 
-  if (lastGaIndex <= 0) {
+  const exchangeMatch = noticeText.match(/^(.*)が.*を引き換えました[0-9]+$/);
+  if (exchangeMatch && exchangeMatch[1]) {
+    return exchangeMatch[1].trim() || null;
+  }
+
+  if (!noticeText.includes('連続視聴記録')) {
     return null;
   }
 
-  return beforeSuffix.slice(0, lastGaIndex).trim();
+  const intlLoginElement = messageElement.querySelector('span.intl-login');
+  if (!intlLoginElement || !intlLoginElement.parentElement) {
+    return null;
+  }
+
+  let previousSpan = intlLoginElement.previousElementSibling;
+  while (previousSpan) {
+    if (previousSpan.tagName === 'SPAN') {
+      const username = (previousSpan.textContent || '').trim();
+      return username || null;
+    }
+    previousSpan = previousSpan.previousElementSibling;
+  }
+
+  return null;
 }
 
 
@@ -558,7 +573,7 @@ function addCheckboxToMessage(messageElement) {
   if (messageElement.matches('.chat-line__message')) {
     userId = messageElement.getAttribute('data-a-user');
   } else if (messageElement.matches(NOTICE_SELECTOR)) {
-    userId = extractUserIdFromNotice(messageElement.innerText);
+    userId = extractUserIdFromNotice(messageElement);
   }
 
   if (!userId) return;
