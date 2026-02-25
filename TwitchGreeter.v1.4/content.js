@@ -11,7 +11,7 @@ let resetPanelState = {
 
 const defaultSettings = {
   extensionEnabled: true,
-  channelScope: 'all',
+  channelScope: 'specific',
   targetChannelId: '',
   themeColor: '#6441a5'
 };
