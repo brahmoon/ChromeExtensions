@@ -256,6 +256,12 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   });
 
+  chrome.storage.onChanged.addListener(function(changes, areaName) {
+    if (areaName === 'local' && changes.greetedUsers) {
+      loadGreetedUsers();
+    }
+  });
+
   loadSettings();
   loadGreetedUsers();
 });
