@@ -372,7 +372,6 @@ function addCheckboxToMessage(messageElement) {
   if (messageElement.matches('.chat-line__message')) {
     userId = messageElement.getAttribute('data-a-user');
   } else if (messageElement.matches(NOTICE_SELECTOR)) {
-    console.log(messageElement.innerText)
     userId = extractUserIdFromNotice(messageElement.innerText);
   }
 
