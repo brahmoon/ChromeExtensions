@@ -269,9 +269,14 @@ document.addEventListener('DOMContentLoaded', function() {
       }
 
       const sortedUsers = Object.entries(data.greetedUsers).sort((a, b) => {
-        if (a[1].greeted && !b[1].greeted) return -1;
-        if (!a[1].greeted && b[1].greeted) return 1;
-        return (b[1].timestamp || 0) - (a[1].timestamp || 0);
+        const aGreeted = Boolean(a[1].greeted);
+        const bGreeted = Boolean(b[1].greeted);
+
+        if (aGreeted !== bGreeted) {
+          return aGreeted ? 1 : -1;
+        }
+
+        return (a[1].timestamp || 0) - (b[1].timestamp || 0);
       });
 
       for (const [userId, userData] of sortedUsers) {
@@ -299,9 +304,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
             if (updatedUsers[userid]) {
               updatedUsers[userid].greeted = isChecked;
-              if (isChecked) {
-                updatedUsers[userid].timestamp = Date.now();
-              }
 
               chrome.storage.local.set({ greetedUsers: updatedUsers }, function() {
                 sendMessageToTwitchTabs({
