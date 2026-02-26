@@ -1198,6 +1198,45 @@ async function moveSingleTabToMiscDomainGroup(windowId, tabId, sourceGroupId) {
   }
 }
 
+async function moveTabToGroupEnd(windowId, groupId, tabId) {
+  if (!Number.isFinite(windowId) || !Number.isFinite(groupId) || groupId < 0 || !Number.isFinite(tabId)) {
+    return;
+  }
+
+  if (!chrome.tabs?.query || !chrome.tabs?.move) {
+    return;
+  }
+
+  try {
+    const groupTabs = await chrome.tabs.query({ windowId, groupId });
+    if (!Array.isArray(groupTabs) || groupTabs.length === 0) {
+      return;
+    }
+
+    let maxIndex = -1;
+    let targetTabFound = false;
+    for (const item of groupTabs) {
+      if (!item || !Number.isFinite(item.index) || !Number.isFinite(item.id)) {
+        continue;
+      }
+      if (item.index > maxIndex) {
+        maxIndex = item.index;
+      }
+      if (item.id === tabId) {
+        targetTabFound = true;
+      }
+    }
+
+    if (!targetTabFound || maxIndex < 0) {
+      return;
+    }
+
+    await chrome.tabs.move(tabId, { index: maxIndex });
+  } catch (error) {
+    console.debug('Failed to move tab to group end:', error);
+  }
+}
+
 async function rebalanceSingletonDomainGroupsInWindow(windowId) {
   if (!Number.isFinite(windowId)) {
     return;
@@ -1341,9 +1380,14 @@ async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
 
   try {
     if (Number.isFinite(targetGroupId) && targetGroupId >= 0) {
-      await chrome.tabs.group({ tabIds: [tab.id], groupId: targetGroupId });
+      const groupedId = await chrome.tabs.group({ tabIds: [tab.id], groupId: targetGroupId });
+      const resolvedGroupId = Number.isFinite(groupedId) ? groupedId : targetGroupId;
+      await moveTabToGroupEnd(tab.windowId, resolvedGroupId, tab.id);
     } else if (miscSameDomainTabIds.length > 0) {
-      await chrome.tabs.group({ tabIds: [...new Set([...miscSameDomainTabIds, tab.id])] });
+      const groupedId = await chrome.tabs.group({ tabIds: [...new Set([...miscSameDomainTabIds, tab.id])] });
+      if (Number.isFinite(groupedId) && groupedId >= 0) {
+        await moveTabToGroupEnd(tab.windowId, groupedId, tab.id);
+      }
     } else if (sourceGroupId !== null && !sourceIsMisc) {
       await chrome.tabs.ungroup(tab.id);
     }
