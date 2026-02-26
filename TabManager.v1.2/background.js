@@ -1058,7 +1058,8 @@ chrome.tabs.onDetached.addListener((tabId) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.url && tab) {
-    autoGroupTabByDomain(tab, { requireActiveContext: true }).catch(() => {});
+    const isBackgroundNewTab = !tab.active && Number.isFinite(tab.openerTabId);
+    autoGroupTabByDomain(tab, { requireActiveContext: !isBackgroundNewTab }).catch(() => {});
   }
 });
 
