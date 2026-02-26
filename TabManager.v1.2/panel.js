@@ -11,6 +11,7 @@ const PREVIEW_CLEAR_CACHE_MESSAGE = 'TabManagerClearPreviewCache';
 const GROUP_TABS_BY_DOMAIN_MESSAGE = 'TabManagerGroupTabsByDomain';
 const PANEL_SYNC_TAB_LIST_ENTITY_KEY = 'tabManagerSyncEntity:tabList';
 const PREVIEW_TOGGLE_ID = 'preview-toggle';
+const BOOKMARK_TOGGLE_ID = 'bookmark-toggle';
 const PROPERTY_BUTTON_ID = 'property-btn';
 const AUDIO_FILTER_BUTTON_ID = 'audio-filter-btn';
 const DOMAIN_GROUP_BUTTON_ID = 'domain-group-btn';
@@ -44,6 +45,8 @@ const PREVIEW_DEFAULT_MESSAGE = 'タブをホバーしてプレビューを表�
 const PREVIEW_DISABLED_MESSAGE = '設定画面からプレビューを有効にしてください';
 const PREVIEW_UNAVAILABLE_MESSAGE = 'このタブのプレビュー画像は利用できません';
 const PREVIEW_REMOVAL_REASON_UNSUPPORTED = 'unsupported';
+const BOOKMARK_BUTTON_VISIBLE_STORAGE_KEY = 'tabManagerBookmarkButtonVisible';
+const BOOKMARK_ROOT_FOLDER_NAME = 'TabManager';
 const PREVIEW_RENDER_THROTTLE_MS = 150;
 
 const TAB_GROUP_COLORS = {
@@ -59,6 +62,7 @@ const TAB_GROUP_COLORS = {
 };
 
 let previewEnabled = false;
+let bookmarkButtonVisible = true;
 let previewCache = {};
 const previewUnavailableTabs = new Set();
 let activePreviewTabId = null;
@@ -1430,37 +1434,71 @@ async function resolveBookmarksBarId() {
   return null;
 }
 
-async function ensureDomainBookmarkFolder(domain) {
-  if (!chrome.bookmarks) {
-    return null;
-  }
-
-  if (typeof domain !== 'string' || domain.length === 0) {
+async function ensureTabManagerBookmarkFolder() {
+  const barId = await resolveBookmarksBarId();
+  if (!barId || !chrome.bookmarks?.getChildren) {
     return null;
   }
 
   try {
-    const results = await chrome.bookmarks.search({ title: domain });
-    if (Array.isArray(results)) {
-      const folder = results.find((item) => !item.url);
-      if (folder?.id) {
-        return folder.id;
+    const children = await chrome.bookmarks.getChildren(barId);
+    if (Array.isArray(children)) {
+      const existing = children.find((item) => !item.url && item.title === BOOKMARK_ROOT_FOLDER_NAME);
+      if (existing?.id) {
+        return existing.id;
       }
     }
   } catch (error) {
-    console.debug('Failed to search bookmark folders:', error);
+    console.debug('Failed to search TabManager bookmark folder:', error);
   }
 
-  const barId = await resolveBookmarksBarId();
-  if (!barId || !chrome.bookmarks.create) {
+  if (!chrome.bookmarks.create) {
     return null;
   }
 
   try {
-    const folder = await chrome.bookmarks.create({ title: domain, parentId: barId });
+    const folder = await chrome.bookmarks.create({
+      title: BOOKMARK_ROOT_FOLDER_NAME,
+      parentId: barId,
+    });
     return folder?.id || null;
   } catch (error) {
-    console.debug('Failed to create domain folder:', error);
+    console.debug('Failed to create TabManager bookmark folder:', error);
+    return null;
+  }
+}
+
+async function ensureDomainBookmarkFolder(domain) {
+  if (!chrome.bookmarks || typeof domain !== 'string' || domain.length === 0) {
+    return null;
+  }
+
+  const rootFolderId = await ensureTabManagerBookmarkFolder();
+  if (!rootFolderId || !chrome.bookmarks.getChildren) {
+    return null;
+  }
+
+  try {
+    const children = await chrome.bookmarks.getChildren(rootFolderId);
+    if (Array.isArray(children)) {
+      const existing = children.find((item) => !item.url && item.title === domain);
+      if (existing?.id) {
+        return existing.id;
+      }
+    }
+  } catch (error) {
+    console.debug('Failed to search domain folder in TabManager:', error);
+  }
+
+  if (!chrome.bookmarks.create) {
+    return null;
+  }
+
+  try {
+    const folder = await chrome.bookmarks.create({ title: domain, parentId: rootFolderId });
+    return folder?.id || null;
+  } catch (error) {
+    console.debug('Failed to create domain folder in TabManager:', error);
     return null;
   }
 }
@@ -1915,12 +1953,14 @@ function createTabListItem(tab) {
   });
 
   const audioButton = createAudioButton(tab);
-  const bookmarkButton = createBookmarkButton(tab);
+  const bookmarkButton = bookmarkButtonVisible ? createBookmarkButton(tab) : null;
 
   li.appendChild(favicon);
   li.appendChild(content);
   li.appendChild(audioButton);
-  li.appendChild(bookmarkButton);
+  if (bookmarkButton) {
+    li.appendChild(bookmarkButton);
+  }
   li.appendChild(closeButton);
   li.title = fullTitle;
 
@@ -2181,6 +2221,42 @@ function updatePreviewToggleUI() {
   if (toggle) {
     toggle.checked = previewEnabled;
   }
+}
+
+function updateBookmarkToggleUI() {
+  const toggle = document.getElementById(BOOKMARK_TOGGLE_ID);
+  if (toggle) {
+    toggle.checked = bookmarkButtonVisible;
+  }
+}
+
+async function initializeBookmarkButtonPreference() {
+  try {
+    const stored = await chrome.storage.local.get({
+      [BOOKMARK_BUTTON_VISIBLE_STORAGE_KEY]: true,
+    });
+    bookmarkButtonVisible = Boolean(stored[BOOKMARK_BUTTON_VISIBLE_STORAGE_KEY]);
+  } catch (error) {
+    bookmarkButtonVisible = true;
+  }
+
+  updateBookmarkToggleUI();
+}
+
+async function handleBookmarkToggleChange(event) {
+  const checked = Boolean(event?.target?.checked);
+  bookmarkButtonVisible = checked;
+  updateBookmarkToggleUI();
+
+  try {
+    await chrome.storage.local.set({
+      [BOOKMARK_BUTTON_VISIBLE_STORAGE_KEY]: checked,
+    });
+  } catch (error) {
+    console.error('Failed to update bookmark button visibility preference:', error);
+  }
+
+  refreshTabs();
 }
 
 function schedulePreviewRender(preview, tab) {
@@ -2667,6 +2743,11 @@ function setupOptionsControls() {
     toggle.addEventListener('change', handlePreviewToggleChange);
   }
 
+  const bookmarkToggle = document.getElementById(BOOKMARK_TOGGLE_ID);
+  if (bookmarkToggle) {
+    bookmarkToggle.addEventListener('change', handleBookmarkToggleChange);
+  }
+
   const themeColorInput = getThemeColorInput();
   if (themeColorInput) {
     themeColorInput.addEventListener('input', handleThemeColorInputChange);
@@ -3143,6 +3224,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupScrollPersistence();
   setupPanelContextMenu();
   await initializePreviewState();
+  await initializeBookmarkButtonPreference();
   await initializePanelSyncSnapshotState();
   attachEventListeners();
   setupHeaderBehavior();
@@ -3292,6 +3374,16 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
         }
         refreshTabs();
       }
+    }
+  }
+
+  const bookmarkButtonVisibleChange = changes[BOOKMARK_BUTTON_VISIBLE_STORAGE_KEY];
+  if (bookmarkButtonVisibleChange) {
+    const nextValue = Boolean(bookmarkButtonVisibleChange.newValue);
+    if (nextValue !== bookmarkButtonVisible) {
+      bookmarkButtonVisible = nextValue;
+      updateBookmarkToggleUI();
+      refreshTabs();
     }
   }
 
