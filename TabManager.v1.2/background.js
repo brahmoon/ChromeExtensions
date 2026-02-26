@@ -47,6 +47,36 @@ const previewRetryTimeouts = new Map();
 const activationCaptureTimeouts = new Map();
 let previewStateReadyPromise = initializePreviewState();
 let autoDomainGroupingEnabled = false;
+const tabGroupIdCache = new Map();
+
+async function warmTabGroupIdCache() {
+  try {
+    const tabs = await chrome.tabs.query({});
+    for (const tab of tabs) {
+      if (!tab || !Number.isFinite(tab.id)) {
+        continue;
+      }
+      const groupId = Number.isFinite(tab.groupId) ? tab.groupId : -1;
+      tabGroupIdCache.set(tab.id, groupId);
+    }
+  } catch (error) {
+    console.debug('Failed to warm tab group cache:', error);
+  }
+}
+
+async function syncTabGroupIdCacheForTabId(tabId) {
+  if (!Number.isFinite(tabId)) {
+    return;
+  }
+
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    const groupId = Number.isFinite(tab?.groupId) ? tab.groupId : -1;
+    tabGroupIdCache.set(tabId, groupId);
+  } catch (error) {
+    tabGroupIdCache.delete(tabId);
+  }
+}
 
 async function loadAutoDomainGroupingPreference() {
   try {
@@ -60,6 +90,7 @@ async function loadAutoDomainGroupingPreference() {
 }
 
 loadAutoDomainGroupingPreference().catch(() => {});
+warmTabGroupIdCache().catch(() => {});
 
 function getPanelSyncEntityKey(entityId) {
   return `${PANEL_SYNC_ENTITY_PREFIX}${entityId}`;
@@ -944,15 +975,39 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   }
 
   await persistActiveTabSyncEntity(tabId, 'activated');
+  await syncTabGroupIdCacheForTabId(tabId);
   await handoffPanelToTab(tabId);
   await persistTabListSyncEntity('activated');
 });
 
-chrome.tabs.onRemoved.addListener(async (tabId) => {
+chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
+  const removedGroupId = tabGroupIdCache.get(tabId);
+  tabGroupIdCache.delete(tabId);
+
   await Promise.all([ensurePanelStateReady(), ensurePreviewStateReady()]);
 
   if (panelState.tabId === tabId) {
     updatePanelState({ tabId: null });
+  }
+
+  if (
+    Number.isFinite(removedGroupId) &&
+    removedGroupId >= 0 &&
+    removeInfo &&
+    Number.isFinite(removeInfo.windowId) &&
+    !removeInfo.isWindowClosing
+  ) {
+    try {
+      const sourceGroupTabs = await chrome.tabs.query({
+        windowId: removeInfo.windowId,
+        groupId: removedGroupId,
+      });
+      if (Array.isArray(sourceGroupTabs) && sourceGroupTabs.length === 1 && Number.isFinite(sourceGroupTabs[0]?.id)) {
+        await moveSingleTabToMiscDomainGroup(removeInfo.windowId, sourceGroupTabs[0].id, removedGroupId);
+      }
+    } catch (error) {
+      console.debug('Failed to rebalance group after tab removal:', error);
+    }
   }
 
   await removePreview(tabId, { reason: PREVIEW_REMOVAL_REASON_CLOSED });
@@ -964,6 +1019,10 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
   if (changeInfo.url || changeInfo.status || changeInfo.audible != null || changeInfo.pinned != null || changeInfo.title) {
     persistTabListSyncEntity('updated').catch(() => {});
+  }
+
+  if (tab && Number.isFinite(tab.id)) {
+    tabGroupIdCache.set(tab.id, Number.isFinite(tab.groupId) ? tab.groupId : -1);
   }
 
   if (!previewEnabled) {
@@ -984,19 +1043,25 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 });
 
 chrome.tabs.onCreated.addListener((tab) => {
+  if (tab && Number.isFinite(tab.id)) {
+    tabGroupIdCache.set(tab.id, Number.isFinite(tab.groupId) ? tab.groupId : -1);
+  }
   autoGroupActiveTabByDomain(tab).catch(() => {});
   persistTabListSyncEntity('created').catch(() => {});
 });
 
-chrome.tabs.onMoved.addListener(() => {
+chrome.tabs.onMoved.addListener((tabId) => {
+  syncTabGroupIdCacheForTabId(tabId).catch(() => {});
   persistTabListSyncEntity('moved').catch(() => {});
 });
 
-chrome.tabs.onAttached.addListener(() => {
+chrome.tabs.onAttached.addListener((tabId) => {
+  syncTabGroupIdCacheForTabId(tabId).catch(() => {});
   persistTabListSyncEntity('attached').catch(() => {});
 });
 
-chrome.tabs.onDetached.addListener(() => {
+chrome.tabs.onDetached.addListener((tabId) => {
+  syncTabGroupIdCacheForTabId(tabId).catch(() => {});
   persistTabListSyncEntity('detached').catch(() => {});
 });
 
