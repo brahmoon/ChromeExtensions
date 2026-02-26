@@ -1503,6 +1503,28 @@ async function ensureDomainBookmarkFolder(domain) {
   }
 }
 
+async function removeDomainFolderIfEmpty(folderId) {
+  if (!chrome.bookmarks?.getChildren || !chrome.bookmarks?.remove || typeof folderId !== 'string' || folderId.length === 0) {
+    return;
+  }
+
+  try {
+    const children = await chrome.bookmarks.getChildren(String(folderId));
+    const hasBookmarks = Array.isArray(children)
+      ? children.some((item) => item && typeof item.url === 'string' && item.url.length > 0)
+      : false;
+    const hasSubFolders = Array.isArray(children)
+      ? children.some((item) => item && !item.url)
+      : false;
+
+    if (!hasBookmarks && !hasSubFolders) {
+      await chrome.bookmarks.remove(String(folderId));
+    }
+  } catch (error) {
+    console.debug('Failed to cleanup empty domain folder:', error);
+  }
+}
+
 async function toggleBookmarkForTab(tab, button) {
   if (!tab || !chrome.bookmarks) {
     return;
@@ -1517,7 +1539,11 @@ async function toggleBookmarkForTab(tab, button) {
     const existing = await resolveBookmarkNode(url);
     if (existing) {
       if (chrome.bookmarks.remove) {
+        const parentId = existing.parentId;
         await chrome.bookmarks.remove(existing.id);
+        if (typeof parentId === 'string' && parentId.length > 0) {
+          await removeDomainFolderIfEmpty(parentId);
+        }
         setBookmarkButtonState(button, false);
       }
       return;
