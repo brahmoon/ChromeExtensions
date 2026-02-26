@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Twitch Greeter</title>
+  <style>
+    html,
+    body {
+      width: 350px;
+      height: 100vh;
+      margin: 0;
+    }
+
+    body {
+      font-family: Arial, sans-serif;
+      padding: 10px 10px 86px;
+      position: relative;
+      min-height: 470px;
+      box-sizing: border-box;
+      background: var(--popup-bg-color, #f7f3ff);
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    h1 {
+      font-size: 18px;
+      margin-bottom: 15px;
+    }
+
+    .popup-header {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 8px;
+    }
+
+    .popup-close-button {
+      border: none;
+      background: transparent;
+      color: #6b6b6b;
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 4px 6px;
+      border-radius: 4px;
+    }
+
+    .popup-close-button:hover {
+      background: rgba(0, 0, 0, 0.08);
+      color: #333;
+    }
+
+    .settings-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .setting-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+    }
+
+    #managedUi {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+    }
+
+    .user-list-panel {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      margin-bottom: 12px;
+    }
+
+    .user-list-header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      padding: 0 10px 6px;
+      font-size: 12px;
+      font-weight: bold;
+      color: #5c4f7d;
+    }
+
+    .user-list-header-time {
+      text-align: right;
+    }
+
+    .setting-row label {
+      font-weight: bold;
+      min-width: 120px;
+    }
+
+    #channelScope,
+    #channelIdInput,
+    #themeColorInput {
+      flex: 1;
+      padding: 6px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+
+
+    #themeColorInput {
+      flex: 0 0 84px;
+      width: 84px;
+      min-width: 0;
+    }
+
+    #channelIdRow {
+      display: none;
+    }
+
+    .color-preview {
+      width: 30px;
+      height: 18px;
+      border: 1px solid #999;
+      border-radius: 3px;
+      cursor: pointer;
+      display: inline-block;
+      flex-shrink: 0;
+      background: #6441a5;
+    }
+
+    #themeColorPicker {
+      display: none;
+    }
+
+    .user-list {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.8);
+    }
+
+    .user-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 5px 0;
+      border-bottom: 1px solid #eee;
+    }
+
+    .user-item:last-child {
+      border-bottom: none;
+    }
+
+    .user-info {
+      display: flex;
+      align-items: center;
+    }
+
+    .user-checkbox {
+      margin-right: 10px;
+    }
+
+    .controls {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 10px;
+    }
+
+    button {
+      padding: 8px 12px;
+      border: none;
+      border-radius: 4px;
+      background-color: #9147ff;
+      color: white;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background-color: #772ce8;
+    }
+
+    button.reset {
+      background-color: #f44336;
+    }
+
+    button.reset:hover {
+      background-color: #d32f2f;
+    }
+
+    .popup-bottom-controls {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px;
+      box-sizing: border-box;
+      background: var(--popup-bottom-controls-bg, #ddd8e8);
+      border-top: 1px solid rgba(0, 0, 0, 0.1);
+      backdrop-filter: blur(2px);
+    }
+
+    .theme-color-setting,
+    .feature-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+    }
+
+    .theme-color-setting {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .theme-color-setting label {
+      font-weight: bold;
+      white-space: nowrap;
+    }
+
+    .feature-toggle {
+      flex-shrink: 0;
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 42px;
+      height: 24px;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: .2s;
+      border-radius: 24px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .2s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider {
+      background-color: #9147ff;
+    }
+
+    input:checked + .slider:before {
+      transform: translateX(18px);
+    }
+  </style>
+</head>
+<body>
+  <div class="popup-header">
+    <button type="button" id="popupCloseButton" class="popup-close-button" aria-label="閉じる">✕</button>
+  </div>
+  <div id="managedUi">
+    <div class="settings-panel">
+      <div class="setting-row">
+        <label for="channelScope">有効化するチャンネル：</label>
+        <select id="channelScope">
+          <option value="specific">特定のチャンネル</option>
+          <option value="all">すべてのチャンネル</option>
+        </select>
+      </div>
+      <div class="setting-row" id="channelIdRow">
+        <label for="channelIdInput">チャンネルID：</label>
+        <input type="text" id="channelIdInput" placeholder="機能を有効化するチャンネルのID">
+      </div>
+    </div>
+
+    <div class="user-list-panel">
+      <div class="user-list-header">
+        <span>ユーザ名</span>
+        <span class="user-list-header-time">追加日時</span>
+      </div>
+      <div class="user-list" id="userList">
+        <div class="loading">読み込み中...</div>
+      </div>
+
+      <div class="controls">
+        <button id="resetBtn" class="reset">すべてリセット</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="popup-bottom-controls">
+    <div class="theme-color-setting">
+      <label for="themeColorInput">テーマ</label>
+      <span class="color-preview" id="themeColorPreview" title="クリックして色を選択"></span>
+      <input type="text" id="themeColorInput" placeholder="#6441a5" maxlength="7">
+      <input type="color" id="themeColorPicker" value="#6441a5">
+    </div>
+
+    <div class="feature-toggle">
+      <span>有効化：</span>
+      <label class="switch">
+        <input type="checkbox" id="enabledToggle" checked>
+        <span class="slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
