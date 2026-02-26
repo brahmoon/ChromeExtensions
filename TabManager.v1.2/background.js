@@ -48,6 +48,7 @@ const activationCaptureTimeouts = new Map();
 let previewStateReadyPromise = initializePreviewState();
 let autoDomainGroupingEnabled = false;
 const tabGroupIdCache = new Map();
+let tabListSyncSequence = 0;
 
 async function warmTabGroupIdCache() {
   try {
@@ -169,13 +170,20 @@ async function persistActiveTabSyncEntity(tabId, reason) {
 }
 
 async function persistTabListSyncEntity(reason) {
+  const syncSequence = ++tabListSyncSequence;
+
   try {
     const tabs = await chrome.tabs.query({});
+    if (syncSequence !== tabListSyncSequence) {
+      return;
+    }
+
     const syncTabs = tabs.map(toSyncTabInfo).filter(Boolean);
     await persistSyncEntity(PANEL_SYNC_TAB_LIST_ENTITY_ID, {
       tabs: syncTabs,
       reason: typeof reason === 'string' ? reason : 'unknown',
       updatedAt: Date.now(),
+      sequence: syncSequence,
     });
   } catch (error) {
     console.error('Failed to persist synchronized tab list:', error);
