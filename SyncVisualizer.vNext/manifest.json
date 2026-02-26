@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Sync Visualizer vNext Demo",
+  "version": "1.0.0",
+  "description": "sync_spec_vNext.md に基づくローカルリアルタイム同期の体験デモ",
+  "permissions": [
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Sync Control Surface"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "runtime.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "constants.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
