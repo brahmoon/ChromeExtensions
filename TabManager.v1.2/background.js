@@ -981,7 +981,6 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
-  const removedGroupId = tabGroupIdCache.get(tabId);
   tabGroupIdCache.delete(tabId);
 
   await Promise.all([ensurePanelStateReady(), ensurePreviewStateReady()]);
@@ -990,24 +989,8 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
     updatePanelState({ tabId: null });
   }
 
-  if (
-    Number.isFinite(removedGroupId) &&
-    removedGroupId >= 0 &&
-    removeInfo &&
-    Number.isFinite(removeInfo.windowId) &&
-    !removeInfo.isWindowClosing
-  ) {
-    try {
-      const sourceGroupTabs = await chrome.tabs.query({
-        windowId: removeInfo.windowId,
-        groupId: removedGroupId,
-      });
-      if (Array.isArray(sourceGroupTabs) && sourceGroupTabs.length === 1 && Number.isFinite(sourceGroupTabs[0]?.id)) {
-        await moveSingleTabToMiscDomainGroup(removeInfo.windowId, sourceGroupTabs[0].id, removedGroupId);
-      }
-    } catch (error) {
-      console.debug('Failed to rebalance group after tab removal:', error);
-    }
+  if (removeInfo && Number.isFinite(removeInfo.windowId) && !removeInfo.isWindowClosing) {
+    await rebalanceSingletonDomainGroupsInWindow(removeInfo.windowId);
   }
 
   await removePreview(tabId, { reason: PREVIEW_REMOVAL_REASON_CLOSED });
@@ -1203,6 +1186,66 @@ async function moveSingleTabToMiscDomainGroup(windowId, tabId, sourceGroupId) {
     });
   } catch (error) {
     console.debug('Failed to move lone tab into misc domain group:', error);
+  }
+}
+
+async function rebalanceSingletonDomainGroupsInWindow(windowId) {
+  if (!Number.isFinite(windowId)) {
+    return;
+  }
+
+  let tabsInWindow;
+  try {
+    tabsInWindow = await chrome.tabs.query({ windowId });
+  } catch (error) {
+    return;
+  }
+
+  const miscGroupId = findMiscDomainGroupId(tabsInWindow);
+  if (!Number.isFinite(miscGroupId) || miscGroupId < 0) {
+    return;
+  }
+
+  const groupedTabs = new Map();
+  for (const tab of tabsInWindow) {
+    if (!tab || tab.pinned || !Number.isFinite(tab.id) || !Number.isFinite(tab.groupId) || tab.groupId < 0) {
+      continue;
+    }
+
+    const existing = groupedTabs.get(tab.groupId);
+    if (existing) {
+      existing.push(tab);
+    } else {
+      groupedTabs.set(tab.groupId, [tab]);
+    }
+  }
+
+  const singletonTabIds = [];
+  for (const [groupId, groupTabs] of groupedTabs.entries()) {
+    if (groupId === miscGroupId || !Array.isArray(groupTabs) || groupTabs.length !== 1) {
+      continue;
+    }
+
+    const loneTab = groupTabs[0];
+    const domain = extractDomainForGrouping(loneTab.url || loneTab.pendingUrl);
+    if (!domain) {
+      continue;
+    }
+
+    singletonTabIds.push(loneTab.id);
+  }
+
+  if (singletonTabIds.length === 0) {
+    return;
+  }
+
+  try {
+    await chrome.tabs.group({
+      tabIds: singletonTabIds,
+      groupId: miscGroupId,
+    });
+  } catch (error) {
+    console.debug('Failed to rebalance singleton domain groups:', error);
   }
 }
 
