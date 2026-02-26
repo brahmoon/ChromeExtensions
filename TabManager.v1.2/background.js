@@ -60,6 +60,7 @@ async function warmTabGroupIdCache() {
       const groupId = Number.isFinite(tab.groupId) ? tab.groupId : -1;
       tabGroupIdCache.set(tab.id, groupId);
     }
+
   } catch (error) {
     console.debug('Failed to warm tab group cache:', error);
   }
@@ -1379,17 +1380,22 @@ async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
   }
 
   try {
+    let hasGroupingChanges = false;
+
     if (Number.isFinite(targetGroupId) && targetGroupId >= 0) {
       const groupedId = await chrome.tabs.group({ tabIds: [tab.id], groupId: targetGroupId });
       const resolvedGroupId = Number.isFinite(groupedId) ? groupedId : targetGroupId;
       await moveTabToGroupEnd(tab.windowId, resolvedGroupId, tab.id);
+      hasGroupingChanges = true;
     } else if (miscSameDomainTabIds.length > 0) {
       const groupedId = await chrome.tabs.group({ tabIds: [...new Set([...miscSameDomainTabIds, tab.id])] });
       if (Number.isFinite(groupedId) && groupedId >= 0) {
         await moveTabToGroupEnd(tab.windowId, groupedId, tab.id);
       }
+      hasGroupingChanges = true;
     } else if (sourceGroupId !== null && !sourceIsMisc) {
       await chrome.tabs.ungroup(tab.id);
+      hasGroupingChanges = true;
     }
 
     if (sourceGroupId !== null && !sourceIsMisc) {
@@ -1399,9 +1405,15 @@ async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
       });
       if (Array.isArray(sourceGroupTabs) && sourceGroupTabs.length === 1 && Number.isFinite(sourceGroupTabs[0]?.id)) {
         await moveSingleTabToMiscDomainGroup(tab.windowId, sourceGroupTabs[0].id, sourceGroupId);
+        hasGroupingChanges = true;
       }
     } else if (sourceIsSingleton && sourceIsMisc && miscSameDomainTabIds.length > 0) {
       await rebalanceSingletonDomainGroupsInWindow(tab.windowId);
+      hasGroupingChanges = true;
+    }
+
+    if (hasGroupingChanges) {
+      await persistTabListSyncEntity('auto-domain-grouping');
     }
   } catch (error) {
     console.debug('Failed to auto group tab by domain:', error);
@@ -1482,6 +1494,7 @@ async function createTabGroup(tabEntries, { title } = {}) {
 }
 
 async function groupTabsByDomain({ scope, windowId }) {
+  let hasGroupingChanges = false;
   const query = {};
   if (scope === GROUP_SCOPE_CURRENT && Number.isFinite(windowId)) {
     query.windowId = windowId;
@@ -1489,7 +1502,7 @@ async function groupTabsByDomain({ scope, windowId }) {
 
   const tabs = await chrome.tabs.query(query);
   if (!Array.isArray(tabs) || tabs.length === 0) {
-    return;
+    return false;
   }
 
   const perWindow = new Map();
@@ -1527,16 +1540,24 @@ async function groupTabsByDomain({ scope, windowId }) {
 
     for (const [domain, domainTabs] of entry.domains.entries()) {
       if (domainTabs.length > 1) {
-        await createTabGroup(domainTabs);
+        const createdGroupId = await createTabGroup(domainTabs);
+        if (Number.isFinite(createdGroupId)) {
+          hasGroupingChanges = true;
+        }
       } else if (domainTabs.length === 1) {
         leftovers.push(domainTabs[0]);
       }
     }
 
     if (leftovers.length > 0) {
-      await createTabGroup(leftovers);
+      const leftoversGroupId = await createTabGroup(leftovers);
+      if (Number.isFinite(leftoversGroupId)) {
+        hasGroupingChanges = true;
+      }
     }
   }
+
+  return hasGroupingChanges;
 }
 
 (async function bootstrapPanelSync() {
@@ -1588,7 +1609,13 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
           if (!Number.isFinite(windowId)) {
             return;
           }
-          return groupTabsByDomain({ scope: GROUP_SCOPE_CURRENT, windowId });
+          return groupTabsByDomain({ scope: GROUP_SCOPE_CURRENT, windowId })
+            .then((hasGroupingChanges) => {
+              if (hasGroupingChanges) {
+                return persistTabListSyncEntity('auto-domain-grouping-enabled');
+              }
+              return null;
+            });
         })
         .catch((error) => {
           console.debug('Failed to run initial auto domain grouping:', error);
@@ -1631,7 +1658,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
       }
 
-      await groupTabsByDomain({ scope, windowId: targetWindowId });
+      const hasGroupingChanges = await groupTabsByDomain({ scope, windowId: targetWindowId });
+      if (hasGroupingChanges) {
+        await persistTabListSyncEntity('manual-domain-grouping');
+      }
       sendResponse({ ok: true });
     })().catch((error) => {
       console.error('Failed to group tabs by domain:', error);
