@@ -25,6 +25,8 @@
         "*://*.twitch.tv/*"
       ],
       "js": [
+        "shared/constants.js",
+        "shared/storage.js",
         "content.js"
       ],
       "css": [

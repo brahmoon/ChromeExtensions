@@ -1,5 +1,6 @@
 // content.js
-let greetedUsers = {};
+// shared/constants.js, shared/storage.js が先に読み込まれていることを前提とする
+
 let chatObserver = null;
 let resetPanelState = {
   rendered: false,
@@ -9,14 +10,27 @@ let resetPanelState = {
   settingsModalElement: null
 };
 
-const defaultSettings = {
-  extensionEnabled: true,
-  channelScope: 'specific',
-  targetChannelId: '',
-  themeColor: '#6441a5'
+// -----------------------------------------------------------------------
+// localCache：設定・index・entity の in-memory キャッシュ
+// -----------------------------------------------------------------------
+
+const localCache = {
+  settings: { ...DEFAULT_SYNC_SETTINGS },
+  index: { ids: [] },
+  entities: {},
+  getIndex() { return this.index; },
+  get(id) { return this.entities[id] ?? null; },
+  set(id, val) { this.entities[id] = val; },
+  delete(id) { delete this.entities[id]; },
+  clear() { this.entities = {}; this.index = { ids: [] }; }
 };
 
-let currentSettings = { ...defaultSettings };
+// -----------------------------------------------------------------------
+// ブートストラップ制御
+// -----------------------------------------------------------------------
+
+let isBootstrapped = false;
+const pendingMessageQueue = [];
 
 function normalizeHexColor(color) {
   if (!color) return null;
@@ -190,15 +204,12 @@ function getCurrentChannelId() {
 }
 
 function isFeatureActiveOnCurrentPage() {
-  if (!currentSettings.extensionEnabled) {
-    return false;
-  }
+  const s = localCache.settings;
+  if (!s.featureEnabled) return false;
 
-  if (currentSettings.channelScope === 'specific') {
-    const target = (currentSettings.targetChannelId || '').trim().toLowerCase();
-    if (!target) {
-      return false;
-    }
+  if (s.scopeMode === 'specific') {
+    const target = (s.scopeTargetId || '').trim().toLowerCase();
+    if (!target) return false;
     return getCurrentChannelId() === target;
   }
 
@@ -224,18 +235,100 @@ function stopObserver() {
   }
 }
 
-function loadSettingsAndApply() {
-  chrome.storage.local.get(defaultSettings, function(data) {
-    currentSettings = {
-      extensionEnabled: data.extensionEnabled,
-      channelScope: data.channelScope,
-      targetChannelId: data.targetChannelId,
-      themeColor: data.themeColor
-    };
+// -----------------------------------------------------------------------
+// apply 系関数（循環更新防止ガード付き・冪等）
+// -----------------------------------------------------------------------
 
-    applyThemeColor(currentSettings.themeColor);
-    applyFeatureState();
+function applySettings(newSettings) {
+  if (!newSettings) return;
+  const merged = { ...DEFAULT_SYNC_SETTINGS, ...newSettings };
+  if (JSON.stringify(localCache.settings) === JSON.stringify(merged)) return;
+
+  localCache.settings = merged;
+  applyThemeColor(merged.themeToken);
+  applyFeatureState();
+}
+
+function applyEntityState(entityId, newValue) {
+  // 削除（null）の場合
+  if (newValue === null) {
+    localCache.delete(entityId);
+    updateUserCheckboxes(entityId, false);
+    return;
+  }
+
+  const cached = localCache.get(entityId);
+  // 値が同一なら何もしない（循環更新・重複処理の防止）
+  if (JSON.stringify(cached) === JSON.stringify(newValue)) return;
+
+  localCache.set(entityId, newValue);
+  updateUserCheckboxes(entityId, newValue.greeted ?? false);
+}
+
+function applyIndex(newIndex, oldIndex) {
+  if (JSON.stringify(localCache.index) === JSON.stringify(newIndex)) return;
+
+  const previousIds = oldIndex?.ids ?? localCache.index.ids.slice();
+  localCache.index = newIndex;
+
+  // index が空 → 全リセット
+  if (newIndex.ids.length === 0) {
+    clearLocalCacheAndDom();
+    return;
+  }
+
+  // 削除された id の entity をキャッシュ・DOM から除去
+  const removedIds = previousIds.filter(id => !newIndex.ids.includes(id));
+  for (const id of removedIds) {
+    localCache.delete(id);
+    updateUserCheckboxes(id, false);
+  }
+
+  // 孤立キーのクリーンアップ（非同期・補助的）
+  cleanupOrphanedEntityKeys(previousIds, newIndex.ids);
+}
+
+function clearLocalCacheAndDom() {
+  localCache.clear();
+  document.querySelectorAll('.greeting-checkbox input').forEach(cb => {
+    cb.checked = false;
   });
+}
+
+function applyGreetedStatus() {
+  for (const userId of localCache.index.ids) {
+    const entity = localCache.get(userId);
+    if (entity && entity.greeted) {
+      updateUserCheckboxes(userId, true);
+    }
+  }
+}
+
+// -----------------------------------------------------------------------
+// bootstrap：起動時に storage から全状態を読み込む
+// -----------------------------------------------------------------------
+
+async function bootstrap() {
+  // Step 1: 設定を読み込む
+  const settings = await loadSyncSettings();
+  localCache.settings = settings;
+  applyThemeColor(settings.themeToken);
+
+  // Step 2: index を読み込み、entity を一括取得する
+  localCache.index = await loadIndex();
+  localCache.entities = await loadAllEntities();
+
+  // Step 3: UI を反映する
+  applyFeatureState();
+
+  // Step 4: ブートストラップ完了
+  isBootstrapped = true;
+
+  // Step 5: キューに溜まったメッセージを処理する
+  while (pendingMessageQueue.length > 0) {
+    const msg = pendingMessageQueue.shift();
+    handleMessage(msg);
+  }
 }
 
 function applyFeatureState() {
@@ -256,51 +349,66 @@ function applyFeatureState() {
   applyGreetedStatus();
 }
 
-chrome.storage.local.get('greetedUsers', function(data) {
-  if (data.greetedUsers) {
-    greetedUsers = data.greetedUsers;
+// -----------------------------------------------------------------------
+// 起動
+// -----------------------------------------------------------------------
+
+bootstrap();
+
+// -----------------------------------------------------------------------
+// メッセージ受信（entityDelta）
+// -----------------------------------------------------------------------
+
+function handleEntityDelta(delta) {
+  const index = localCache.getIndex();
+
+  for (const [entityId, newValue] of Object.entries(delta)) {
+    // index 存在チェック（null は削除操作なので除外）
+    if (newValue !== null && !index.ids.includes(entityId)) continue;
+
+    applyEntityState(entityId, newValue);
   }
-  loadSettingsAndApply();
-});
+}
+
+function handleMessage(message) {
+  if (message.action === ACTIONS.ENTITY_DELTA) {
+    handleEntityDelta(message.delta ?? {});
+  }
+}
 
 chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
-  if (message.action === 'updateGreetedStatus') {
-    updateUserCheckboxes(message.userId, message.greeted);
-    if (greetedUsers[message.userId]) {
-      greetedUsers[message.userId].greeted = message.greeted;
-    }
-  } else if (message.action === 'resetAllGreetings') {
-    const allCheckboxes = document.querySelectorAll('.greeting-checkbox input');
-    allCheckboxes.forEach(checkbox => {
-      checkbox.checked = false;
-    });
+  if (!message || !message.action) return;
 
-    for (const userId in greetedUsers) {
-      if (greetedUsers[userId]) {
-        greetedUsers[userId].greeted = false;
-      }
-    }
-  } else if (message.action === 'settingsChanged') {
-    loadSettingsAndApply();
+  if (!isBootstrapped) {
+    pendingMessageQueue.push(message);
+    sendResponse({ success: true });
+    return true;
   }
 
+  handleMessage(message);
   sendResponse({ success: true });
   return true;
 });
 
+// -----------------------------------------------------------------------
+// storage.onChanged（Option B フィルタリング・最終整合）
+// -----------------------------------------------------------------------
 
-chrome.storage.onChanged.addListener(function(changes, areaName) {
-  if (areaName !== 'local') {
-    return;
-  }
+chrome.storage.onChanged.addListener(function(changes, area) {
+  if (area !== 'local') return;
 
-  if (changes.greetedUsers) {
-    greetedUsers = changes.greetedUsers.newValue || {};
-    applyGreetedStatus();
-  }
-
-  if (changes.themeColor || changes.extensionEnabled || changes.channelScope || changes.targetChannelId) {
-    loadSettingsAndApply();
+  for (const key in changes) {
+    if (key.startsWith(STORAGE_KEYS.ENTITY_PREFIX)) {
+      const entityId = key.replace(STORAGE_KEYS.ENTITY_PREFIX, '');
+      applyEntityState(entityId, changes[key].newValue ?? null);
+    } else if (key === STORAGE_KEYS.ENTITIES_INDEX) {
+      const newIndex = changes[key].newValue ?? { ids: [] };
+      const oldIndex = changes[key].oldValue ?? { ids: [] };
+      applyIndex(newIndex, oldIndex);
+    } else if (key === STORAGE_KEYS.SYNC_SETTINGS) {
+      applySettings(changes[key].newValue);
+    }
+    // それ以外のキーは無視する
   }
 });
 
@@ -401,13 +509,9 @@ function insertResetPanel(chatContainer) {
     }
   };
 
-  const clearGreetings = () => {
-    greetedUsers = {};
-    const allCheckboxes = document.querySelectorAll('.greeting-checkbox input');
-    allCheckboxes.forEach(checkbox => {
-      checkbox.checked = false;
-    });
-    chrome.storage.local.set({ greetedUsers: {} });
+  const clearGreetings = async () => {
+    // index を空にする（storage.onChanged → applyIndex(空) → clearLocalCacheAndDom() で自動反映）
+    await resetIndex();
   };
 
   panel.querySelector('.greeting-reset-confirm').addEventListener('click', function() {
@@ -425,7 +529,7 @@ function insertResetPanel(chatContainer) {
   });
 
   panel.querySelector('.greeting-settings-button').addEventListener('click', function() {
-    chrome.runtime.sendMessage({ action: 'openPopupWindow' });
+    chrome.runtime.sendMessage({ action: ACTIONS.OPEN_POPUP_WINDOW });
   });
 
   panelParent.appendChild(panel);
@@ -534,18 +638,16 @@ function resolveUsernameFromMessage(messageElement, userId) {
   return userId;
 }
 
-function ensureDetectedUserTracked(messageElement, userId) {
-  if (!userId || greetedUsers[userId]) {
+async function ensureDetectedUserTracked(messageElement, userId) {
+  if (!userId || localCache.get(userId)) {
     return;
   }
 
   const resolvedUsername = resolveUsernameFromMessage(messageElement, userId);
   const normalizedUsername = (resolvedUsername || '').trim().toLowerCase();
 
-  const alreadyTrackedSameName = Object.values(greetedUsers).some(user => {
-    if (!user || !user.username) {
-      return false;
-    }
+  const alreadyTrackedSameName = Object.values(localCache.entities).some(user => {
+    if (!user || !user.username) return false;
     return user.username.trim().toLowerCase() === normalizedUsername;
   });
 
@@ -553,13 +655,18 @@ function ensureDetectedUserTracked(messageElement, userId) {
     return;
   }
 
-  greetedUsers[userId] = {
+  const newEntity = {
     greeted: false,
     timestamp: Date.now(),
     username: resolvedUsername
   };
 
-  chrome.storage.local.set({ greetedUsers: greetedUsers });
+  // 楽観的更新（UI 即時反映）
+  localCache.set(userId, newEntity);
+  localCache.index.ids.push(userId);
+
+  // storage への書き込み（entity先行 → index更新の順序を保証）
+  await addEntity(userId, newEntity);
 }
 
 function placeCheckbox(messageElement, checkbox) {
@@ -639,30 +746,41 @@ function addCheckboxToMessage(messageElement) {
 
   const checkbox = document.createElement('span');
   checkbox.className = 'greeting-checkbox';
+  const entity = localCache.get(userId);
   checkbox.innerHTML = `
     <input type="checkbox" id="greeting-${userId}-${Date.now()}"
-           ${(greetedUsers[userId] && greetedUsers[userId].greeted) ? 'checked' : ''}
+           ${(entity && entity.greeted) ? 'checked' : ''}
            data-user-id="${userId}">
   `;
 
   const inputElement = checkbox.querySelector('input');
-  inputElement.addEventListener('change', function() {
+  inputElement.addEventListener('change', async function() {
     const userid = this.getAttribute('data-user-id');
     const isChecked = this.checked;
 
+    // 楽観的更新（UI 即時反映）
     updateUserCheckboxes(userid, isChecked);
 
-    if (isChecked) {
-      greetedUsers[userid] = {
-        greeted: true,
-        timestamp: Date.now(),
-        username: resolveUsernameFromMessage(messageElement, userId)
-      };
-    } else if (greetedUsers[userid]) {
-      greetedUsers[userid].greeted = false;
-    }
+    const current = localCache.get(userid);
+    const updated = current
+      ? { ...current, greeted: isChecked }
+      : { greeted: isChecked, timestamp: Date.now(), username: resolveUsernameFromMessage(messageElement, userid) };
 
-    chrome.storage.local.set({ greetedUsers: greetedUsers });
+    localCache.set(userid, updated);
+
+    // storage 更新（entity のみ。index は変更不要）
+    await saveEntity(userid, updated);
+
+    // entityDelta 送信（storage 書き込み完了後）
+    chrome.runtime.sendMessage({
+      action: ACTIONS.ENTITY_DELTA,
+      delta: { [userid]: { greeted: isChecked } }
+    }, function() {
+      // NO_RECEIVER は warning 扱い（クラッシュしない）
+      if (chrome.runtime.lastError) {
+        console.debug('entityDelta 送信失敗（popup 未起動）:', chrome.runtime.lastError.message);
+      }
+    });
   });
 
   if (messageElement.matches(NOTICE_SELECTOR)) {
@@ -680,29 +798,18 @@ function updateUserCheckboxes(userId, isChecked) {
   });
 }
 
-function applyGreetedStatus() {
-  for (const userId in greetedUsers) {
-    if (greetedUsers[userId].greeted) {
-      updateUserCheckboxes(userId, true);
-    }
-  }
-}
-
-function cleanupOldGreetings() {
+async function cleanupOldGreetings() {
   const now = Date.now();
   const oneDayInMs = 24 * 60 * 60 * 1000;
-  let changed = false;
 
-  for (const userId in greetedUsers) {
-    if (greetedUsers[userId].timestamp && (now - greetedUsers[userId].timestamp > oneDayInMs)) {
-      greetedUsers[userId].greeted = false;
-      changed = true;
+  for (const userId of localCache.index.ids) {
+    const entity = localCache.get(userId);
+    if (entity && entity.timestamp && (now - entity.timestamp > oneDayInMs) && entity.greeted) {
+      const updated = { ...entity, greeted: false };
+      localCache.set(userId, updated);
+      await saveEntity(userId, updated);
+      updateUserCheckboxes(userId, false);
     }
-  }
-
-  if (changed) {
-    chrome.storage.local.set({ greetedUsers: greetedUsers });
-    applyGreetedStatus();
   }
 }
 
