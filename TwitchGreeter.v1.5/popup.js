@@ -1,10 +1,13 @@
 // popup.js
-const defaultSettings = {
-  extensionEnabled: true,
-  channelScope: 'specific',
-  targetChannelId: '',
-  themeColor: '#6441a5'
+const defaultSyncSettings = {
+  featureEnabled: true,
+  scopeMode: 'specific',
+  scopeTargetId: '',
+  themeToken: '#6441a5'
 };
+
+const TRACKED_INDEX_KEY = 'trackedEntities:index';
+const TRACKED_ENTITY_PREFIX = 'trackedEntity:';
 
 function normalizeHexColor(color) {
   if (!color) return null;
@@ -36,7 +39,6 @@ function mixWithWhite(hex, ratio) {
     b: rgb.b + (255 - rgb.b) * ratio
   });
 }
-
 
 function rgbToHsl({ r, g, b }) {
   const red = r / 255;
@@ -142,6 +144,95 @@ function applyThemeColor(themeColor) {
   document.documentElement.style.setProperty('--popup-bottom-controls-bg', bottomControlsBg);
 }
 
+function getEntityKey(entityId) {
+  return `${TRACKED_ENTITY_PREFIX}${entityId}`;
+}
+
+function toLegacySettings(syncSettings) {
+  return {
+    extensionEnabled: syncSettings.featureEnabled,
+    channelScope: syncSettings.scopeMode,
+    targetChannelId: syncSettings.scopeTargetId,
+    themeColor: syncSettings.themeToken
+  };
+}
+
+function loadSyncSettings(callback) {
+  chrome.storage.local.get(['syncSettings', 'extensionEnabled', 'channelScope', 'targetChannelId', 'themeColor'], function(data) {
+    const syncSettings = {
+      featureEnabled: data.syncSettings?.featureEnabled ?? data.extensionEnabled ?? defaultSyncSettings.featureEnabled,
+      scopeMode: data.syncSettings?.scopeMode ?? data.channelScope ?? defaultSyncSettings.scopeMode,
+      scopeTargetId: data.syncSettings?.scopeTargetId ?? data.targetChannelId ?? defaultSyncSettings.scopeTargetId,
+      themeToken: data.syncSettings?.themeToken ?? data.themeColor ?? defaultSyncSettings.themeToken
+    };
+
+    if (!data.syncSettings) {
+      chrome.storage.local.set({ syncSettings: syncSettings });
+    }
+
+    callback(syncSettings);
+  });
+}
+
+function saveSyncSettings(patch, callback) {
+  loadSyncSettings(function(current) {
+    const merged = { ...current, ...patch };
+    chrome.storage.local.set({ syncSettings: merged }, function() {
+      if (callback) callback(merged);
+    });
+  });
+}
+
+function loadTrackedUsers(callback) {
+  chrome.storage.local.get([TRACKED_INDEX_KEY, 'greetedUsers'], function(data) {
+    const ids = data[TRACKED_INDEX_KEY]?.ids || [];
+
+    if (ids.length === 0 && data.greetedUsers && Object.keys(data.greetedUsers).length > 0) {
+      const writes = {};
+      const migratedIds = [];
+      Object.entries(data.greetedUsers).forEach(([id, value]) => {
+        writes[getEntityKey(id)] = value;
+        migratedIds.push(id);
+      });
+      writes[TRACKED_INDEX_KEY] = { ids: migratedIds };
+      chrome.storage.local.set(writes, function() {
+        callback(data.greetedUsers);
+      });
+      return;
+    }
+
+    if (ids.length === 0) {
+      callback({});
+      return;
+    }
+
+    const keys = ids.map(getEntityKey);
+    chrome.storage.local.get(keys, function(entityData) {
+      const users = {};
+      ids.forEach(id => {
+        const entity = entityData[getEntityKey(id)];
+        if (entity) {
+          users[id] = entity;
+        }
+      });
+      callback(users);
+    });
+  });
+}
+
+function upsertTrackedUser(userId, userValue, callback) {
+  const entityKey = getEntityKey(userId);
+  chrome.storage.local.set({ [entityKey]: userValue }, function() {
+    chrome.storage.local.get(TRACKED_INDEX_KEY, function(data) {
+      const current = data[TRACKED_INDEX_KEY]?.ids || [];
+      const merged = Array.from(new Set([...current, userId]));
+      chrome.storage.local.set({ [TRACKED_INDEX_KEY]: { ids: merged } }, function() {
+        if (callback) callback();
+      });
+    });
+  });
+}
+
 document.addEventListener('DOMContentLoaded', function() {
   const channelScopeSelect = document.getElementById('channelScope');
   const channelIdRow = document.getElementById('channelIdRow');
@@ -234,21 +325,9 @@ document.addEventListener('DOMContentLoaded', function() {
     applyThemeColor(normalized);
   }
 
-  function saveThemeColor(themeColor) {
-    chrome.storage.local.set({ themeColor: themeColor }, function() {
-      notifyFeatureStateChanged();
-    });
-  }
-
   function loadSettings() {
-    chrome.storage.local.get(defaultSettings, function(data) {
-      const settings = {
-        extensionEnabled: data.extensionEnabled,
-        channelScope: data.channelScope,
-        targetChannelId: data.targetChannelId,
-        themeColor: data.themeColor
-      };
-
+    loadSyncSettings(function(syncSettings) {
+      const settings = toLegacySettings(syncSettings);
       applyEnabledState(settings.extensionEnabled);
       channelScopeSelect.value = settings.channelScope;
       channelIdInput.value = settings.targetChannelId || '';
@@ -260,15 +339,15 @@ document.addEventListener('DOMContentLoaded', function() {
   function loadGreetedUsers() {
     const userListElement = document.getElementById('userList');
 
-    chrome.storage.local.get('greetedUsers', function(data) {
+    loadTrackedUsers(function(users) {
       userListElement.innerHTML = '';
 
-      if (!data.greetedUsers || Object.keys(data.greetedUsers).length === 0) {
+      if (Object.keys(users).length === 0) {
         userListElement.innerHTML = '<div class="empty-message">まだ挨拶したユーザーはいません</div>';
         return;
       }
 
-      const sortedUsers = Object.entries(data.greetedUsers).sort((a, b) => {
+      const sortedUsers = Object.entries(users).sort((a, b) => {
         const aGreeted = Boolean(a[1].greeted);
         const bGreeted = Boolean(b[1].greeted);
 
@@ -297,22 +376,14 @@ document.addEventListener('DOMContentLoaded', function() {
         const checkbox = userElement.querySelector('.user-checkbox');
         checkbox.addEventListener('change', function() {
           const isChecked = this.checked;
-          const userid = this.getAttribute('data-user-id');
-
-          chrome.storage.local.get('greetedUsers', function(storageData) {
-            const updatedUsers = storageData.greetedUsers || {};
-
-            if (updatedUsers[userid]) {
-              updatedUsers[userid].greeted = isChecked;
-
-              chrome.storage.local.set({ greetedUsers: updatedUsers }, function() {
-                sendMessageToTwitchTabs({
-                  action: 'updateGreetedStatus',
-                  userId: userid,
-                  greeted: isChecked
-                });
-              });
-            }
+          const userIdFromRow = this.getAttribute('data-user-id');
+          upsertTrackedUser(userIdFromRow, { ...userData, greeted: isChecked }, function() {
+            sendMessageToTwitchTabs({
+              action: 'entityDelta',
+              delta: {
+                [userIdFromRow]: { ...userData, greeted: isChecked }
+              }
+            });
           });
         });
 
@@ -325,7 +396,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const scope = this.value;
     updateChannelIdVisibility(scope);
 
-    chrome.storage.local.set({ channelScope: scope }, function() {
+    saveSyncSettings({ scopeMode: scope }, function() {
       notifyFeatureStateChanged();
     });
   });
@@ -333,12 +404,11 @@ document.addEventListener('DOMContentLoaded', function() {
   channelIdInput.addEventListener('input', function() {
     const channelId = this.value.trim();
 
-    chrome.storage.local.set({ targetChannelId: channelId }, function() {
+    saveSyncSettings({ scopeTargetId: channelId }, function() {
       if (channelScopeSelect.value === 'specific') {
         notifyImmediateActivationIfMatched(channelId);
         return;
       }
-
       notifyFeatureStateChanged();
     });
   });
@@ -346,7 +416,7 @@ document.addEventListener('DOMContentLoaded', function() {
   enabledToggle.addEventListener('change', function() {
     const enabled = this.checked;
 
-    chrome.storage.local.set({ extensionEnabled: enabled }, function() {
+    saveSyncSettings({ featureEnabled: enabled }, function() {
       applyEnabledState(enabled);
       notifyFeatureStateChanged();
     });
@@ -354,14 +424,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
   themeColorInput.addEventListener('change', function() {
     const normalized = normalizeHexColor(this.value);
-    if (!normalized) {
-      applyThemeInputs('#6441a5');
-      saveThemeColor('#6441a5');
-      return;
-    }
-
-    applyThemeInputs(normalized);
-    saveThemeColor(normalized);
+    const color = normalized || '#6441a5';
+    applyThemeInputs(color);
+    saveSyncSettings({ themeToken: color }, notifyFeatureStateChanged);
   });
 
   themeColorPreview.addEventListener('click', function() {
@@ -371,7 +436,7 @@ document.addEventListener('DOMContentLoaded', function() {
   themeColorPicker.addEventListener('input', function() {
     const normalized = normalizeHexColor(this.value) || '#6441a5';
     applyThemeInputs(normalized);
-    saveThemeColor(normalized);
+    saveSyncSettings({ themeToken: normalized }, notifyFeatureStateChanged);
   });
 
   popupCloseButton.addEventListener('click', function() {
@@ -386,23 +451,28 @@ document.addEventListener('DOMContentLoaded', function() {
 
   document.getElementById('resetBtn').addEventListener('click', function() {
     if (confirm('すべての挨拶履歴をリセットしますか？')) {
-      chrome.storage.local.set({ greetedUsers: {} }, function() {
+      chrome.storage.local.set({ [TRACKED_INDEX_KEY]: { ids: [] } }, function() {
         loadGreetedUsers();
-
-        sendMessageToTwitchTabs({ action: 'resetAllGreetings' });
+        sendMessageToTwitchTabs({ action: 'entityDelta', delta: {} });
       });
     }
   });
 
   chrome.runtime.onMessage.addListener(function(message) {
-    if (message.action === 'updateGreetedStatus') {
+    if (message.action === 'entityDelta') {
       loadGreetedUsers();
     }
   });
 
   chrome.storage.onChanged.addListener(function(changes, areaName) {
-    if (areaName === 'local' && changes.greetedUsers) {
+    if (areaName !== 'local') return;
+
+    if (changes[TRACKED_INDEX_KEY] || Object.keys(changes).some(key => key.startsWith(TRACKED_ENTITY_PREFIX))) {
       loadGreetedUsers();
+    }
+
+    if (changes.syncSettings) {
+      loadSettings();
     }
   });
 
