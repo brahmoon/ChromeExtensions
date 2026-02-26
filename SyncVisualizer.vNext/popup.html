@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Control Surface</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="panel">
+    <h1>Control Surface</h1>
+    <p class="caption">storage + message の即時反映と最終整合を体験</p>
+
+    <section class="card">
+      <h2>SyncSettings</h2>
+      <label><input id="featureEnabled" type="checkbox" /> 機能を有効化</label>
+      <label>scopeMode
+        <select id="scopeMode">
+          <option value="all">all</option>
+          <option value="specific">specific</option>
+        </select>
+      </label>
+      <label>scopeTargetId
+        <input id="scopeTargetId" type="text" placeholder="specific時のみ" />
+      </label>
+      <label>themeToken
+        <input id="themeToken" type="color" />
+      </label>
+      <button id="saveSettings">設定を保存</button>
+    </section>
+
+    <section class="card">
+      <h2>TrackedEntity</h2>
+      <div class="row">
+        <input id="entityId" type="text" placeholder="entity id" />
+        <button id="addEntity">追加 / 更新</button>
+      </div>
+      <div class="row">
+        <input id="removeEntityId" type="text" placeholder="remove id" />
+        <button id="removeEntity">削除</button>
+      </div>
+      <button id="resetAll" class="danger">全リセット（indexのみ空）</button>
+      <pre id="entityState"></pre>
+    </section>
+
+    <section class="card">
+      <button id="openRuntime">Runtime Surface を開く</button>
+      <pre id="log"></pre>
+    </section>
+  </main>
+  <script src="constants.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
