@@ -1353,6 +1353,8 @@ async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
   const sourceTabs = sourceGroupId !== null ? (groupedTabs.get(sourceGroupId) || []) : [];
   const sourceIsSingleton = sourceGroupId !== null && sourceTabs.length === 1;
   const sourceIsMisc = sourceGroupId !== null && sourceGroupId === miscGroupId;
+  const sourceIsDedicatedDomain =
+    sourceGroupId !== null && !sourceIsMisc && isDedicatedDomainGroup(sourceTabs, domain);
 
   let targetGroupId = null;
   for (const [groupId, groupTabs] of groupedTabs.entries()) {
@@ -1381,24 +1383,32 @@ async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
 
   try {
     let hasGroupingChanges = false;
+    let leftSourceGroup = false;
 
     if (Number.isFinite(targetGroupId) && targetGroupId >= 0) {
       const groupedId = await chrome.tabs.group({ tabIds: [tab.id], groupId: targetGroupId });
       const resolvedGroupId = Number.isFinite(groupedId) ? groupedId : targetGroupId;
       await moveTabToGroupEnd(tab.windowId, resolvedGroupId, tab.id);
       hasGroupingChanges = true;
+      if (sourceGroupId !== null && resolvedGroupId !== sourceGroupId) {
+        leftSourceGroup = true;
+      }
     } else if (miscSameDomainTabIds.length > 0) {
       const groupedId = await chrome.tabs.group({ tabIds: [...new Set([...miscSameDomainTabIds, tab.id])] });
       if (Number.isFinite(groupedId) && groupedId >= 0) {
         await moveTabToGroupEnd(tab.windowId, groupedId, tab.id);
       }
       hasGroupingChanges = true;
-    } else if (sourceGroupId !== null && !sourceIsMisc) {
+      if (sourceGroupId !== null) {
+        leftSourceGroup = true;
+      }
+    } else if (sourceGroupId !== null && !sourceIsMisc && !sourceIsDedicatedDomain) {
       await chrome.tabs.ungroup(tab.id);
       hasGroupingChanges = true;
+      leftSourceGroup = true;
     }
 
-    if (sourceGroupId !== null && !sourceIsMisc) {
+    if (leftSourceGroup && sourceGroupId !== null && !sourceIsMisc) {
       const sourceGroupTabs = await chrome.tabs.query({
         windowId: tab.windowId,
         groupId: sourceGroupId,
