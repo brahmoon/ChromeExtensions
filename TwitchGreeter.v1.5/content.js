@@ -18,6 +18,126 @@ const defaultSettings = {
 
 let currentSettings = { ...defaultSettings };
 
+const defaultSyncSettings = {
+  featureEnabled: true,
+  scopeMode: 'specific',
+  scopeTargetId: '',
+  themeToken: '#6441a5'
+};
+
+const TRACKED_INDEX_KEY = 'trackedEntities:index';
+const TRACKED_ENTITY_PREFIX = 'trackedEntity:';
+let isBootstrapped = false;
+const pendingMessageQueue = [];
+
+function getEntityKey(entityId) {
+  return `${TRACKED_ENTITY_PREFIX}${entityId}`;
+}
+
+function isDeepEqual(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function applyIndex(indexValue) {
+  const ids = indexValue?.ids || [];
+  const valid = new Set(ids);
+
+  if (ids.length === 0) {
+    greetedUsers = {};
+    clearAllCheckboxes();
+    return;
+  }
+
+  Object.keys(greetedUsers).forEach(userId => {
+    if (!valid.has(userId)) {
+      delete greetedUsers[userId];
+      updateUserCheckboxes(userId, false);
+    }
+  });
+}
+
+function clearAllCheckboxes() {
+  document.querySelectorAll('.greeting-checkbox input').forEach(checkbox => {
+    checkbox.checked = false;
+  });
+}
+
+function loadSyncSettingsAndApply(callback) {
+  chrome.storage.local.get(['syncSettings', 'extensionEnabled', 'channelScope', 'targetChannelId', 'themeColor'], function(data) {
+    const resolved = {
+      extensionEnabled: data.syncSettings?.featureEnabled ?? data.extensionEnabled ?? defaultSyncSettings.featureEnabled,
+      channelScope: data.syncSettings?.scopeMode ?? data.channelScope ?? defaultSyncSettings.scopeMode,
+      targetChannelId: data.syncSettings?.scopeTargetId ?? data.targetChannelId ?? defaultSyncSettings.scopeTargetId,
+      themeColor: data.syncSettings?.themeToken ?? data.themeColor ?? defaultSyncSettings.themeToken
+    };
+
+    currentSettings = resolved;
+    applyThemeColor(currentSettings.themeColor);
+    applyFeatureState();
+
+    if (!data.syncSettings) {
+      chrome.storage.local.set({
+        syncSettings: {
+          featureEnabled: resolved.extensionEnabled,
+          scopeMode: resolved.channelScope,
+          scopeTargetId: resolved.targetChannelId,
+          themeToken: resolved.themeColor
+        }
+      });
+    }
+
+    if (callback) callback();
+  });
+}
+
+function loadTrackedUsers(callback) {
+  chrome.storage.local.get([TRACKED_INDEX_KEY, 'greetedUsers'], function(data) {
+    const ids = data[TRACKED_INDEX_KEY]?.ids || [];
+
+    if (ids.length === 0 && data.greetedUsers && Object.keys(data.greetedUsers).length > 0) {
+      const writes = {};
+      const migratedIds = [];
+      Object.entries(data.greetedUsers).forEach(([id, value]) => {
+        writes[getEntityKey(id)] = value;
+        migratedIds.push(id);
+      });
+      writes[TRACKED_INDEX_KEY] = { ids: migratedIds };
+      chrome.storage.local.set(writes, function() {
+        callback(data.greetedUsers);
+      });
+      return;
+    }
+
+    if (ids.length === 0) {
+      callback({});
+      return;
+    }
+
+    chrome.storage.local.get(ids.map(getEntityKey), function(entityData) {
+      const users = {};
+      ids.forEach(id => {
+        if (entityData[getEntityKey(id)]) {
+          users[id] = entityData[getEntityKey(id)];
+        }
+      });
+      callback(users);
+    });
+  });
+}
+
+function saveTrackedUser(userId, value, callback) {
+  chrome.storage.local.set({ [getEntityKey(userId)]: value }, function() {
+    chrome.storage.local.get(TRACKED_INDEX_KEY, function(data) {
+      const currentIds = data[TRACKED_INDEX_KEY]?.ids || [];
+      const merged = Array.from(new Set([...currentIds, userId]));
+      chrome.storage.local.set({ [TRACKED_INDEX_KEY]: { ids: merged } }, function() {
+        if (callback) callback();
+      });
+    });
+  });
+}
+
+
 function normalizeHexColor(color) {
   if (!color) return null;
   const value = color.trim();
@@ -225,17 +345,7 @@ function stopObserver() {
 }
 
 function loadSettingsAndApply() {
-  chrome.storage.local.get(defaultSettings, function(data) {
-    currentSettings = {
-      extensionEnabled: data.extensionEnabled,
-      channelScope: data.channelScope,
-      targetChannelId: data.targetChannelId,
-      themeColor: data.themeColor
-    };
-
-    applyThemeColor(currentSettings.themeColor);
-    applyFeatureState();
-  });
+  loadSyncSettingsAndApply();
 }
 
 function applyFeatureState() {
@@ -256,35 +366,40 @@ function applyFeatureState() {
   applyGreetedStatus();
 }
 
-chrome.storage.local.get('greetedUsers', function(data) {
-  if (data.greetedUsers) {
-    greetedUsers = data.greetedUsers;
-  }
+loadTrackedUsers(function(users) {
+  greetedUsers = users;
   loadSettingsAndApply();
+  isBootstrapped = true;
+  while (pendingMessageQueue.length > 0) {
+    const queued = pendingMessageQueue.shift();
+    handleIncomingMessage(queued.message, queued.sendResponse);
+  }
 });
 
-chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
-  if (message.action === 'updateGreetedStatus') {
-    updateUserCheckboxes(message.userId, message.greeted);
-    if (greetedUsers[message.userId]) {
-      greetedUsers[message.userId].greeted = message.greeted;
-    }
-  } else if (message.action === 'resetAllGreetings') {
-    const allCheckboxes = document.querySelectorAll('.greeting-checkbox input');
-    allCheckboxes.forEach(checkbox => {
-      checkbox.checked = false;
+function handleIncomingMessage(message, sendResponse) {
+  if (message.action === 'entityDelta') {
+    const delta = message.delta || {};
+    Object.keys(delta).forEach(userId => {
+      if (!greetedUsers[userId]) return;
+      const incoming = delta[userId];
+      if (!incoming) return;
+      greetedUsers[userId] = { ...greetedUsers[userId], ...incoming };
+      updateUserCheckboxes(userId, Boolean(greetedUsers[userId].greeted));
     });
-
-    for (const userId in greetedUsers) {
-      if (greetedUsers[userId]) {
-        greetedUsers[userId].greeted = false;
-      }
-    }
   } else if (message.action === 'settingsChanged') {
     loadSettingsAndApply();
   }
 
   sendResponse({ success: true });
+}
+
+chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
+  if (!isBootstrapped) {
+    pendingMessageQueue.push({ message, sendResponse });
+    return true;
+  }
+
+  handleIncomingMessage(message, sendResponse);
   return true;
 });
 
@@ -294,13 +409,38 @@ chrome.storage.onChanged.addListener(function(changes, areaName) {
     return;
   }
 
-  if (changes.greetedUsers) {
-    greetedUsers = changes.greetedUsers.newValue || {};
-    applyGreetedStatus();
-  }
+  for (const key in changes) {
+    if (key === TRACKED_INDEX_KEY) {
+      applyIndex(changes[key].newValue);
+      if ((changes[key].newValue?.ids || []).length === 0) {
+        greetedUsers = {};
+      }
+      continue;
+    }
 
-  if (changes.themeColor || changes.extensionEnabled || changes.channelScope || changes.targetChannelId) {
-    loadSettingsAndApply();
+    if (key.startsWith(TRACKED_ENTITY_PREFIX)) {
+      const entityId = key.replace(TRACKED_ENTITY_PREFIX, '');
+      const indexIds = new Set(Object.keys(greetedUsers));
+      const nextValue = changes[key].newValue;
+
+      if (!indexIds.has(entityId) && !nextValue) {
+        continue;
+      }
+
+      if (isDeepEqual(greetedUsers[entityId], nextValue)) {
+        continue;
+      }
+
+      if (nextValue) {
+        greetedUsers[entityId] = nextValue;
+        updateUserCheckboxes(entityId, Boolean(nextValue.greeted));
+      }
+      continue;
+    }
+
+    if (key === 'syncSettings') {
+      loadSettingsAndApply();
+    }
   }
 });
 
@@ -407,7 +547,7 @@ function insertResetPanel(chatContainer) {
     allCheckboxes.forEach(checkbox => {
       checkbox.checked = false;
     });
-    chrome.storage.local.set({ greetedUsers: {} });
+    chrome.storage.local.set({ [TRACKED_INDEX_KEY]: { ids: [] } });
   };
 
   panel.querySelector('.greeting-reset-confirm').addEventListener('click', function() {
@@ -559,7 +699,7 @@ function ensureDetectedUserTracked(messageElement, userId) {
     username: resolvedUsername
   };
 
-  chrome.storage.local.set({ greetedUsers: greetedUsers });
+  saveTrackedUser(userId, greetedUsers[userId]);
 }
 
 function placeCheckbox(messageElement, checkbox) {
@@ -662,7 +802,12 @@ function addCheckboxToMessage(messageElement) {
       greetedUsers[userid].greeted = false;
     }
 
-    chrome.storage.local.set({ greetedUsers: greetedUsers });
+    saveTrackedUser(userid, greetedUsers[userid], function() {
+      chrome.runtime.sendMessage({
+        action: 'entityDelta',
+        delta: { [userid]: greetedUsers[userid] }
+      });
+    });
   });
 
   if (messageElement.matches(NOTICE_SELECTOR)) {
@@ -701,8 +846,20 @@ function cleanupOldGreetings() {
   }
 
   if (changed) {
-    chrome.storage.local.set({ greetedUsers: greetedUsers });
-    applyGreetedStatus();
+    const updates = Object.keys(greetedUsers);
+    let pending = updates.length;
+    if (!pending) {
+      applyGreetedStatus();
+      return;
+    }
+    updates.forEach(userId => {
+      saveTrackedUser(userId, greetedUsers[userId], function() {
+        pending -= 1;
+        if (pending === 0) {
+          applyGreetedStatus();
+        }
+      });
+    });
   }
 }
 
