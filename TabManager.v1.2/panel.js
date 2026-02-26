@@ -9,6 +9,7 @@ const PREVIEW_OVERLAY_UPDATE_MESSAGE = 'TabManagerPreviewOverlayUpdate';
 const PREVIEW_OVERLAY_VISIBILITY_MESSAGE = 'TabManagerPreviewOverlayVisibility';
 const PREVIEW_CLEAR_CACHE_MESSAGE = 'TabManagerClearPreviewCache';
 const GROUP_TABS_BY_DOMAIN_MESSAGE = 'TabManagerGroupTabsByDomain';
+const PANEL_SYNC_TAB_LIST_ENTITY_KEY = 'tabManagerSyncEntity:tabList';
 const PREVIEW_TOGGLE_ID = 'preview-toggle';
 const PROPERTY_BUTTON_ID = 'property-btn';
 const AUDIO_FILTER_BUTTON_ID = 'audio-filter-btn';
@@ -80,6 +81,8 @@ let activationHistory = loadActivationHistoryFromStorage();
 let lastKnownActiveTabId = null;
 let lastKnownOpenTabIds = new Set();
 let panelWindowId = null;
+let latestAppliedTabListSyncSequence = 0;
+let latestAppliedTabListSyncUpdatedAt = 0;
 const tabMetadataMap = new WeakMap();
 const groupMetadataMap = new WeakMap();
 let contextMenuState = {
@@ -2896,6 +2899,29 @@ async function initializePreviewState() {
   }
 }
 
+async function initializePanelSyncSnapshotState() {
+  try {
+    const stored = await chrome.storage.local.get({
+      [PANEL_SYNC_TAB_LIST_ENTITY_KEY]: null,
+    });
+
+    const tabListEntity = stored[PANEL_SYNC_TAB_LIST_ENTITY_KEY];
+    if (!tabListEntity || typeof tabListEntity !== 'object') {
+      return;
+    }
+
+    if (Number.isFinite(tabListEntity.sequence)) {
+      latestAppliedTabListSyncSequence = Math.trunc(tabListEntity.sequence);
+    }
+
+    if (Number.isFinite(tabListEntity.updatedAt)) {
+      latestAppliedTabListSyncUpdatedAt = Math.trunc(tabListEntity.updatedAt);
+    }
+  } catch (error) {
+    console.debug('Failed to initialize panel sync snapshot state:', error);
+  }
+}
+
 async function refreshTabs() {
   hideContextMenu();
   const requestId = ++refreshTabsRequestId;
@@ -3117,6 +3143,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupScrollPersistence();
   setupPanelContextMenu();
   await initializePreviewState();
+  await initializePanelSyncSnapshotState();
   attachEventListeners();
   setupHeaderBehavior();
   refreshTabs();
@@ -3236,6 +3263,34 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
             schedulePreviewRender(preview, tab);
           })
           .catch(() => {});
+      }
+    }
+  }
+
+  const tabListSyncChange = changes[PANEL_SYNC_TAB_LIST_ENTITY_KEY];
+  if (tabListSyncChange) {
+    const nextValue = tabListSyncChange.newValue;
+    if (nextValue && typeof nextValue === 'object') {
+      const nextSequence = Number.isFinite(nextValue.sequence)
+        ? Math.trunc(nextValue.sequence)
+        : null;
+      const nextUpdatedAt = Number.isFinite(nextValue.updatedAt)
+        ? Math.trunc(nextValue.updatedAt)
+        : null;
+
+      const shouldApplyBySequence =
+        Number.isFinite(nextSequence) && nextSequence > latestAppliedTabListSyncSequence;
+      const shouldApplyByTimestamp =
+        !Number.isFinite(nextSequence) && Number.isFinite(nextUpdatedAt) && nextUpdatedAt > latestAppliedTabListSyncUpdatedAt;
+
+      if (shouldApplyBySequence || shouldApplyByTimestamp) {
+        if (Number.isFinite(nextSequence)) {
+          latestAppliedTabListSyncSequence = nextSequence;
+        }
+        if (Number.isFinite(nextUpdatedAt)) {
+          latestAppliedTabListSyncUpdatedAt = nextUpdatedAt;
+        }
+        refreshTabs();
       }
     }
   }
