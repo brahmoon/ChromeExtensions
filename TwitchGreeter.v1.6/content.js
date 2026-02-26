@@ -442,23 +442,39 @@ function setupMutationObserver() {
 
   insertResetPanel(chatContainer);
 
+  // addCheckboxToMessage は async のため、forEach では Promise が無視される。
+  // 逐次処理ヘルパーで直列実行し、並列 addEntityToIndex による LWW 競合を防ぐ。
+  async function processTargetsSequentially(targets) {
+    for (const target of targets) {
+      await addCheckboxToMessage(target);
+    }
+  }
+
   chatObserver = new MutationObserver(mutations => {
     if (!isFeatureActiveOnCurrentPage()) {
       return;
     }
 
+    const targets = [];
     mutations.forEach(mutation => {
       if (mutation.type === 'childList') {
         mutation.addedNodes.forEach(node => {
-          collectMessageTargets(node).forEach(addCheckboxToMessage);
+          collectMessageTargets(node).forEach(t => targets.push(t));
         });
       }
     });
+
+    if (targets.length > 0) {
+      processTargetsSequentially(targets);
+    }
   });
 
   chatObserver.observe(chatContainer, { childList: true, subtree: true });
 
-  document.querySelectorAll(`.chat-line__message, ${NOTICE_SELECTOR}`).forEach(addCheckboxToMessage);
+  const existingTargets = Array.from(
+    document.querySelectorAll(`.chat-line__message, ${NOTICE_SELECTOR}`)
+  );
+  processTargetsSequentially(existingTargets);
 }
 
 function insertResetPanel(chatContainer) {
@@ -638,35 +654,55 @@ function resolveUsernameFromMessage(messageElement, userId) {
   return userId;
 }
 
+// 処理中の userId を追跡するロックセット
+// 同一 userId の ensureDetectedUserTracked が並列実行されるのを防ぐ
+const _trackingInProgress = new Set();
+
 async function ensureDetectedUserTracked(messageElement, userId) {
-  if (!userId || localCache.get(userId)) {
+  if (!userId) return;
+
+  // キャッシュ済み、またはすでに処理中なら即リターン
+  if (localCache.get(userId) || _trackingInProgress.has(userId)) {
     return;
   }
 
-  const resolvedUsername = resolveUsernameFromMessage(messageElement, userId);
-  const normalizedUsername = (resolvedUsername || '').trim().toLowerCase();
+  // ロック取得（await より前に同期的に行う）
+  _trackingInProgress.add(userId);
 
-  const alreadyTrackedSameName = Object.values(localCache.entities).some(user => {
-    if (!user || !user.username) return false;
-    return user.username.trim().toLowerCase() === normalizedUsername;
-  });
+  try {
+    // ロック取得後に再度キャッシュを確認（先行処理が完了していた場合）
+    if (localCache.get(userId)) {
+      return;
+    }
 
-  if (alreadyTrackedSameName) {
-    return;
+    const resolvedUsername = resolveUsernameFromMessage(messageElement, userId);
+    const normalizedUsername = (resolvedUsername || '').trim().toLowerCase();
+
+    const alreadyTrackedSameName = Object.values(localCache.entities).some(user => {
+      if (!user || !user.username) return false;
+      return user.username.trim().toLowerCase() === normalizedUsername;
+    });
+
+    if (alreadyTrackedSameName) {
+      return;
+    }
+
+    const newEntity = {
+      greeted: false,
+      timestamp: Date.now(),
+      username: resolvedUsername
+    };
+
+    // 楽観的更新（UI 即時反映）
+    localCache.set(userId, newEntity);
+    localCache.index.ids.push(userId);
+
+    // storage への書き込み（entity先行 → index更新の順序を保証）
+    await addEntity(userId, newEntity);
+  } finally {
+    // 成功・例外どちらの場合もロックを解放する
+    _trackingInProgress.delete(userId);
   }
-
-  const newEntity = {
-    greeted: false,
-    timestamp: Date.now(),
-    username: resolvedUsername
-  };
-
-  // 楽観的更新（UI 即時反映）
-  localCache.set(userId, newEntity);
-  localCache.index.ids.push(userId);
-
-  // storage への書き込み（entity先行 → index更新の順序を保証）
-  await addEntity(userId, newEntity);
 }
 
 function placeCheckbox(messageElement, checkbox) {
@@ -723,7 +759,7 @@ function placeCheckboxForNoticeMessage(messageElement, checkbox) {
   noticeMessageContainer.insertBefore(checkbox, noticeMessageContainer.firstChild);
 }
 
-function addCheckboxToMessage(messageElement) {
+async function addCheckboxToMessage(messageElement) {
   if (!isFeatureActiveOnCurrentPage()) {
     return;
   }
@@ -742,7 +778,7 @@ function addCheckboxToMessage(messageElement) {
 
   if (!userId) return;
 
-  ensureDetectedUserTracked(messageElement, userId);
+  await ensureDetectedUserTracked(messageElement, userId);
 
   const checkbox = document.createElement('span');
   checkbox.className = 'greeting-checkbox';
