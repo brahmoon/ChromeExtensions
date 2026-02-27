@@ -1482,7 +1482,16 @@ async function rebalanceSingletonDomainGroupsInWindow(windowId) {
 }
 
 async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
-  if (!tab) {
+  if (!tab || !Number.isFinite(tab.id)) {
+    return;
+  }
+
+  try {
+    const refreshedTab = await chrome.tabs.get(tab.id);
+    if (refreshedTab) {
+      tab = refreshedTab;
+    }
+  } catch (error) {
     return;
   }
 
@@ -1516,15 +1525,6 @@ async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
 
   try {
     let tabsInWindow = await chrome.tabs.query({ windowId: tab.windowId });
-    const normalized = await normalizeSingletonDomainGroupsInWindow(tab.windowId, tabsInWindow);
-    if (normalized) {
-      tabsInWindow = await chrome.tabs.query({ windowId: tab.windowId });
-      const refreshedTab = await chrome.tabs.get(tab.id);
-      if (refreshedTab) {
-        tab = refreshedTab;
-      }
-    }
-
     const destination = await resolveGroupingDestination(tab.windowId, tab, tabsInWindow);
     if (!destination) {
       return;
@@ -1566,6 +1566,13 @@ async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
 
     if (!tabAlreadyInDestination || destination.kind === 'domain-from-misc') {
       await moveTabToGroupEnd(tab.windowId, resolvedGroupId, tab.id);
+    }
+
+    const shouldNormalizeSingletons = destination.kind === 'misc' || destination.kind === 'misc-created';
+    let normalized = false;
+    if (shouldNormalizeSingletons) {
+      tabsInWindow = await chrome.tabs.query({ windowId: tab.windowId });
+      normalized = await normalizeSingletonDomainGroupsInWindow(tab.windowId, tabsInWindow);
     }
 
     if (normalized || !tabAlreadyInDestination || migrateTabIds.length > 0 || destination.kind === 'domain-from-misc') {
