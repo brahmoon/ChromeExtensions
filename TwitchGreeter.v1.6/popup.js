@@ -183,6 +183,78 @@ async function loadSettings() {
 // ユーザ一覧の読み込み（Option B 形式）
 // -----------------------------------------------------------------------
 
+// -----------------------------------------------------------------------
+// ユーザーリスト差分更新
+// -----------------------------------------------------------------------
+
+/**
+ * 1件分の user-item 要素を生成して返す。
+ * イベントリスナーも付与する。
+ */
+function createUserItemElement(userId, userData) {
+  const userElement = document.createElement('div');
+  userElement.className = 'user-item';
+  userElement.dataset.userId = userId;
+
+  const timestamp = userData.timestamp ? new Date(userData.timestamp).toLocaleString() : '不明';
+  const username = userData.username || userId;
+
+  userElement.innerHTML = `
+    <div class="user-info">
+      <input type="checkbox" class="user-checkbox" data-user-id="${userId}" ${userData.greeted ? 'checked' : ''}>
+      <span class="user-name">${username}</span>
+    </div>
+    <span class="user-time">${timestamp}</span>
+  `;
+
+  const checkbox = userElement.querySelector('.user-checkbox');
+  checkbox.addEventListener('change', async function() {
+    const isChecked = this.checked;
+    const uid = this.getAttribute('data-user-id');
+
+    // entity 更新（個別キーのみ。index は変更不要）
+    await saveEntity(uid, { ...userData, greeted: isChecked });
+
+    // entityDelta を送信（storage 書き込み完了後）
+    sendMessageToTwitchTabs({
+      action: ACTIONS.ENTITY_DELTA,
+      delta: { [uid]: { greeted: isChecked } }
+    });
+  });
+
+  return userElement;
+}
+
+/**
+ * ソート順に従って挿入すべき位置を返す。
+ * greeted=false が先（未挨拶）、greeted=true が後（挨拶済）。
+ * 同 greeted 内では timestamp 昇順。
+ */
+function findInsertPosition(userListElement, userData) {
+  const items = userListElement.querySelectorAll('.user-item');
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const itemCheckbox = item.querySelector('.user-checkbox');
+    const itemGreeted = itemCheckbox ? itemCheckbox.checked : false;
+    const itemTime = parseInt(item.dataset.timestamp || '0', 10);
+
+    const newGreeted = Boolean(userData.greeted);
+    const newTime = userData.timestamp || 0;
+
+    // greeted=false（未挨拶）は greeted=true（挨拶済）より前
+    if (!newGreeted && itemGreeted) return item;
+    if (newGreeted && !itemGreeted) continue;
+
+    // 同 greeted 内では timestamp 昇順
+    if (newTime < itemTime) return item;
+  }
+  return null; // 末尾に追加
+}
+
+/**
+ * 初回フル描画。リスト全体を構築する。
+ * ページ読み込み時・リセット時のみ呼ぶ。
+ */
 async function loadGreetedUsers() {
   const userListElement = document.getElementById('userList');
   userListElement.innerHTML = '';
@@ -198,46 +270,70 @@ async function loadGreetedUsers() {
   const sortedUsers = Object.entries(entities).sort((a, b) => {
     const aGreeted = Boolean(a[1].greeted);
     const bGreeted = Boolean(b[1].greeted);
-
-    if (aGreeted !== bGreeted) {
-      return aGreeted ? 1 : -1;
-    }
-
+    if (aGreeted !== bGreeted) return aGreeted ? 1 : -1;
     return (a[1].timestamp || 0) - (b[1].timestamp || 0);
   });
 
+  const fragment = document.createDocumentFragment();
   for (const [userId, userData] of sortedUsers) {
-    const userElement = document.createElement('div');
-    userElement.className = 'user-item';
-
-    const timestamp = userData.timestamp ? new Date(userData.timestamp).toLocaleString() : '不明';
-    const username = userData.username || userId;
-
-    userElement.innerHTML = `
-      <div class="user-info">
-        <input type="checkbox" class="user-checkbox" data-user-id="${userId}" ${userData.greeted ? 'checked' : ''}>
-        <span class="user-name">${username}</span>
-      </div>
-      <span class="user-time">${timestamp}</span>
-    `;
-
-    const checkbox = userElement.querySelector('.user-checkbox');
-    checkbox.addEventListener('change', async function() {
-      const isChecked = this.checked;
-      const uid = this.getAttribute('data-user-id');
-
-      // entity 更新（個別キーのみ。index は変更不要）
-      await saveEntity(uid, { ...userData, greeted: isChecked });
-
-      // entityDelta を送信（storage 書き込み完了後）
-      sendMessageToTwitchTabs({
-        action: ACTIONS.ENTITY_DELTA,
-        delta: { [uid]: { greeted: isChecked } }
-      });
-    });
-
-    userListElement.appendChild(userElement);
+    const el = createUserItemElement(userId, userData);
+    el.dataset.timestamp = userData.timestamp || 0;
+    fragment.appendChild(el);
   }
+  userListElement.appendChild(fragment);
+}
+
+/**
+ * 差分更新。storage.onChanged で entity / index が変化したときに呼ぶ。
+ * - 新規ユーザー：要素を挿入する（スクロール位置を維持）
+ * - greeted 変化：チェックボックスのみ更新する
+ * - 削除：要素を除去する
+ */
+async function patchUserList(changedKey, newValue) {
+  const userListElement = document.getElementById('userList');
+
+  // index が変化した場合（リセットなど）はフル再描画
+  if (changedKey === STORAGE_KEYS.ENTITIES_INDEX) {
+    await loadGreetedUsers();
+    return;
+  }
+
+  // entity キーの変化
+  if (!changedKey.startsWith(STORAGE_KEYS.ENTITY_PREFIX)) return;
+
+  const userId = changedKey.replace(STORAGE_KEYS.ENTITY_PREFIX, '');
+  const existing = userListElement.querySelector(`.user-item[data-user-id="${userId}"]`);
+
+  // 削除（null）
+  if (newValue === null || newValue === undefined) {
+    if (existing) existing.remove();
+    // リストが空になったら空メッセージを表示
+    if (userListElement.querySelectorAll('.user-item').length === 0) {
+      userListElement.innerHTML = '<div class="empty-message">まだ挨拶したユーザーはいません</div>';
+    }
+    return;
+  }
+
+  // greeted 変化のみ（既存要素のチェックボックスだけ更新）
+  if (existing) {
+    const checkbox = existing.querySelector('.user-checkbox');
+    if (checkbox && checkbox.checked !== Boolean(newValue.greeted)) {
+      checkbox.checked = Boolean(newValue.greeted);
+    }
+    return;
+  }
+
+  // 新規追加
+  // 空メッセージがあれば除去
+  const emptyMsg = userListElement.querySelector('.empty-message');
+  if (emptyMsg) emptyMsg.remove();
+
+  const el = createUserItemElement(userId, newValue);
+  el.dataset.timestamp = newValue.timestamp || 0;
+
+  // ソート順に従って挿入位置を決定
+  const before = findInsertPosition(userListElement, newValue);
+  userListElement.insertBefore(el, before); // before=null のときは末尾挿入
 }
 
 // -----------------------------------------------------------------------
@@ -312,18 +408,22 @@ document.addEventListener('DOMContentLoaded', function() {
     window.close();
   });
 
-  // ---- storage.onChanged：ユーザ一覧の自動再描画（Option B フィルタリング） ----
+  // ---- storage.onChanged：差分更新（Option B フィルタリング） ----
+  // entity キーは patchUserList で1件ずつ差分更新する。
+  // index キーの変化（リセット等）はフル再描画にフォールバックする。
 
   chrome.storage.onChanged.addListener(function(changes, areaName) {
     if (areaName !== 'local') return;
 
     for (const key in changes) {
-      if (
-        key === STORAGE_KEYS.ENTITIES_INDEX ||
-        key.startsWith(STORAGE_KEYS.ENTITY_PREFIX)
-      ) {
-        loadGreetedUsers();
-        return; // 1回の変更バッチで複数キーが変わっても再描画は1度だけ
+      if (key === STORAGE_KEYS.ENTITIES_INDEX) {
+        // index 変化（リセットなど）→ フル再描画
+        patchUserList(key, changes[key].newValue);
+        return;
+      }
+      if (key.startsWith(STORAGE_KEYS.ENTITY_PREFIX)) {
+        // entity 変化 → 差分更新（スクロール位置・ちらつきなし）
+        patchUserList(key, changes[key].newValue);
       }
     }
   });
