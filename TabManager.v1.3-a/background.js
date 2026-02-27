@@ -1386,7 +1386,16 @@ async function resolveGroupingDestination(windowId, tab, tabsInWindow) {
     excludeGroupId: sourceGroupId,
   });
   if (Number.isFinite(sameDomainGroupId) && sameDomainGroupId >= 0) {
-    return { groupId: sameDomainGroupId, kind: 'domain', seedTabIds: [] };
+    const groupedTabs = collectGroupTabsById(tabsInWindow, { excludeGroupId: sourceGroupId });
+    const miscGroupId = findMiscDomainGroupId(tabsInWindow, {
+      excludeGroupId: sourceGroupId,
+    });
+    const miscTabs = Number.isFinite(miscGroupId) ? (groupedTabs.get(miscGroupId) || []) : [];
+    const migrateTabIds = collectSameDomainTabIdsInGroup(miscTabs, tabDomain, {
+      excludeTabId: tab.id,
+    });
+
+    return { groupId: sameDomainGroupId, kind: 'domain', seedTabIds: [], migrateTabIds };
   }
 
   const miscGroupId = findMiscDomainGroupId(tabsInWindow, {
@@ -1400,16 +1409,16 @@ async function resolveGroupingDestination(windowId, tab, tabsInWindow) {
     });
 
     if (seedTabIds.length > 0) {
-      return { groupId: null, kind: 'domain-from-misc', seedTabIds };
+      return { groupId: null, kind: 'domain-from-misc', seedTabIds, migrateTabIds: [] };
     }
 
-    return { groupId: miscGroupId, kind: 'misc', seedTabIds: [] };
+    return { groupId: miscGroupId, kind: 'misc', seedTabIds: [], migrateTabIds: [] };
   }
 
   try {
     const createdGroupId = await chrome.tabs.group({ tabIds: [tab.id] });
     if (Number.isFinite(createdGroupId) && createdGroupId >= 0) {
-      return { groupId: createdGroupId, kind: 'misc-created', seedTabIds: [] };
+      return { groupId: createdGroupId, kind: 'misc-created', seedTabIds: [], migrateTabIds: [] };
     }
   } catch (error) {
     console.debug('Failed to create misc group for tab:', error);
@@ -1525,16 +1534,15 @@ async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
       return;
     }
 
-    if (Number.isFinite(tab.groupId) && Number.isFinite(destination.groupId) && tab.groupId === destination.groupId) {
-      if (normalized) {
-        await persistTabListSyncEntity('auto-domain-grouping');
-      }
-      return;
-    }
-
     const seedTabIds = Array.isArray(destination.seedTabIds)
       ? destination.seedTabIds.filter((id) => Number.isFinite(id))
       : [];
+    const migrateTabIds = Array.isArray(destination.migrateTabIds)
+      ? destination.migrateTabIds.filter((id) => Number.isFinite(id))
+      : [];
+
+    const tabAlreadyInDestination =
+      Number.isFinite(tab.groupId) && Number.isFinite(destination.groupId) && tab.groupId === destination.groupId;
 
     let resolvedGroupId = Number.isFinite(destination.groupId) ? destination.groupId : null;
     if (destination.kind === 'domain-from-misc' && seedTabIds.length > 0) {
@@ -1543,7 +1551,7 @@ async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
       if (Number.isFinite(createdDomainGroupId)) {
         resolvedGroupId = createdDomainGroupId;
       }
-    } else if (Number.isFinite(destination.groupId)) {
+    } else if (Number.isFinite(destination.groupId) && !tabAlreadyInDestination) {
       const groupedId = await chrome.tabs.group({ tabIds: [tab.id], groupId: destination.groupId });
       resolvedGroupId = Number.isFinite(groupedId) ? groupedId : destination.groupId;
     }
@@ -1552,8 +1560,17 @@ async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
       return;
     }
 
-    await moveTabToGroupEnd(tab.windowId, resolvedGroupId, tab.id);
-    await persistTabListSyncEntity('auto-domain-grouping');
+    if (destination.kind === 'domain' && migrateTabIds.length > 0) {
+      await chrome.tabs.group({ tabIds: [...new Set(migrateTabIds)], groupId: resolvedGroupId });
+    }
+
+    if (!tabAlreadyInDestination || destination.kind === 'domain-from-misc') {
+      await moveTabToGroupEnd(tab.windowId, resolvedGroupId, tab.id);
+    }
+
+    if (normalized || !tabAlreadyInDestination || migrateTabIds.length > 0 || destination.kind === 'domain-from-misc') {
+      await persistTabListSyncEntity('auto-domain-grouping');
+    }
   } catch (error) {
     console.debug('Failed to auto group tab by domain:', error);
   }
