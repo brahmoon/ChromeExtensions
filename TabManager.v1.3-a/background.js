@@ -1012,7 +1012,7 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
   }
 
   if (removeInfo && Number.isFinite(removeInfo.windowId) && !removeInfo.isWindowClosing) {
-    await rebalanceSingletonDomainGroupsInWindow(removeInfo.windowId);
+    await runCommonGroupingForSingletonTabsInWindow(removeInfo.windowId);
   }
 
   await removePreview(tabId, { reason: PREVIEW_REMOVAL_REASON_CLOSED });
@@ -1084,11 +1084,16 @@ chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
       }
 
       if (getWindowAutoGroupingState(newWindowId)) {
-        await groupTabsByDomain({
-          scope: GROUP_SCOPE_CURRENT,
-          windowId: newWindowId,
-        });
-        await rebalanceSingletonDomainGroupsInWindow(newWindowId);
+        try {
+          const attachedTab = await chrome.tabs.get(tabId);
+          if (attachedTab) {
+            await autoGroupTabByDomain(attachedTab, { requireActiveContext: false });
+          }
+        } catch (error) {
+          // ignore lookup failure for moved/closed tabs
+        }
+
+        await runCommonGroupingForSingletonTabsInWindow(newWindowId, { excludeTabId: tabId });
       }
     }
 
@@ -1104,7 +1109,7 @@ chrome.tabs.onDetached.addListener((tabId, detachInfo) => {
     detachedTabSourceWindowState.set(tabId, getWindowAutoGroupingState(oldWindowId));
 
     if (getWindowAutoGroupingState(oldWindowId)) {
-      rebalanceSingletonDomainGroupsInWindow(oldWindowId).catch(() => {});
+      runCommonGroupingForSingletonTabsInWindow(oldWindowId, { excludeTabId: tabId }).catch(() => {});
     }
 
     setTimeout(() => {
@@ -1466,8 +1471,8 @@ async function moveTabToGroupEnd(windowId, groupId, tabId) {
   }
 }
 
-async function rebalanceSingletonDomainGroupsInWindow(windowId) {
-  if (!Number.isFinite(windowId)) {
+async function runCommonGroupingForSingletonTabsInWindow(windowId, { excludeTabId } = {}) {
+  if (!Number.isFinite(windowId) || !chrome.tabs?.query) {
     return;
   }
 
@@ -1478,7 +1483,27 @@ async function rebalanceSingletonDomainGroupsInWindow(windowId) {
     return;
   }
 
-  await normalizeSingletonDomainGroupsInWindow(windowId, tabsInWindow);
+  const groupedTabs = collectGroupTabsById(tabsInWindow);
+  for (const [, groupTabs] of groupedTabs.entries()) {
+    if (!Array.isArray(groupTabs) || groupTabs.length !== 1) {
+      continue;
+    }
+
+    const loneTab = groupTabs[0];
+    if (!loneTab || !Number.isFinite(loneTab.id)) {
+      continue;
+    }
+    if (Number.isFinite(excludeTabId) && loneTab.id === excludeTabId) {
+      continue;
+    }
+
+    const domain = extractDomainForGrouping(loneTab.url || loneTab.pendingUrl);
+    if (!domain) {
+      continue;
+    }
+
+    await autoGroupTabByDomain(loneTab, { requireActiveContext: false });
+  }
 }
 
 async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
