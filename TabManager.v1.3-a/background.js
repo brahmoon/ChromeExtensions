@@ -50,6 +50,8 @@ const tabGroupIdCache = new Map();
 const windowAutoDomainGroupingState = new Map();
 const detachedTabSourceWindowState = new Map();
 let tabListSyncSequence = 0;
+const autoGroupingInFlightTabIds = new Set();
+const autoGroupingPendingTabIds = new Set();
 
 async function warmTabGroupIdCache() {
   try {
@@ -1003,6 +1005,7 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
+  const previousGroupId = tabGroupIdCache.get(tabId);
   tabGroupIdCache.delete(tabId);
 
   await Promise.all([ensurePanelStateReady(), ensurePreviewStateReady()]);
@@ -1012,6 +1015,7 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
   }
 
   if (removeInfo && Number.isFinite(removeInfo.windowId) && !removeInfo.isWindowClosing) {
+    await disbandSingletonGroupAfterRemoval(removeInfo.windowId, previousGroupId);
     await runCommonGroupingForSingletonTabsInWindow(removeInfo.windowId);
   }
 
@@ -1486,6 +1490,48 @@ async function moveTabToGroupEnd(windowId, groupId, tabId) {
   }
 }
 
+async function disbandSingletonGroupAfterRemoval(windowId, groupId) {
+  if (!Number.isFinite(windowId) || !Number.isFinite(groupId) || groupId < 0) {
+    return;
+  }
+
+  if (!chrome.tabs?.query || !chrome.tabs?.ungroup) {
+    return;
+  }
+
+  let groupTabs;
+  try {
+    groupTabs = await chrome.tabs.query({ windowId, groupId });
+  } catch (error) {
+    return;
+  }
+
+  if (!Array.isArray(groupTabs) || groupTabs.length !== 1) {
+    return;
+  }
+
+  const loneTab = groupTabs[0];
+  if (!loneTab || !Number.isFinite(loneTab.id)) {
+    return;
+  }
+
+  try {
+    await chrome.tabs.ungroup([loneTab.id]);
+  } catch (error) {
+    console.debug('Failed to disband singleton group after tab removal:', error);
+    return;
+  }
+
+  try {
+    const refreshed = await chrome.tabs.get(loneTab.id);
+    if (refreshed) {
+      await autoGroupTabByDomain(refreshed, { requireActiveContext: false });
+    }
+  } catch (error) {
+    // ignore follow-up regroup failures for closed or transient tabs
+  }
+}
+
 async function runCommonGroupingForSingletonTabsInWindow(windowId, { excludeTabId } = {}) {
   if (!Number.isFinite(windowId) || !chrome.tabs?.query) {
     return;
@@ -1521,7 +1567,7 @@ async function runCommonGroupingForSingletonTabsInWindow(windowId, { excludeTabI
   }
 }
 
-async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
+async function autoGroupTabByDomainCore(tab, { requireActiveContext } = {}) {
   if (!tab || !Number.isFinite(tab.id)) {
     return;
   }
@@ -1622,6 +1668,44 @@ async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
     console.debug('Failed to auto group tab by domain:', error);
   }
 }
+async function autoGroupTabByDomain(tab, options = {}) {
+  if (!tab || !Number.isFinite(tab.id)) {
+    return;
+  }
+
+  const tabId = tab.id;
+  if (autoGroupingInFlightTabIds.has(tabId)) {
+    autoGroupingPendingTabIds.add(tabId);
+    return;
+  }
+
+  autoGroupingInFlightTabIds.add(tabId);
+  let currentTab = tab;
+
+  try {
+    while (true) {
+      autoGroupingPendingTabIds.delete(tabId);
+      await autoGroupTabByDomainCore(currentTab, options);
+
+      if (!autoGroupingPendingTabIds.has(tabId)) {
+        break;
+      }
+
+      try {
+        const refreshed = await chrome.tabs.get(tabId);
+        if (refreshed) {
+          currentTab = refreshed;
+        }
+      } catch (error) {
+        break;
+      }
+    }
+  } finally {
+    autoGroupingPendingTabIds.delete(tabId);
+    autoGroupingInFlightTabIds.delete(tabId);
+  }
+}
+
 
 async function resolveWindowIdForGrouping(explicitWindowId, sender) {
   if (Number.isFinite(explicitWindowId)) {
