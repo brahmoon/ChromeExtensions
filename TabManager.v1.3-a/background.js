@@ -1117,6 +1117,7 @@ chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
           scope: GROUP_SCOPE_CURRENT,
           windowId: newWindowId,
         });
+        await rebalanceSingletonDomainGroupsInWindow(newWindowId);
       }
     }
 
@@ -1128,7 +1129,12 @@ chrome.tabs.onDetached.addListener((tabId, detachInfo) => {
   syncTabGroupIdCacheForTabId(tabId).catch(() => {});
 
   if (Number.isFinite(detachInfo?.oldWindowId)) {
-    detachedTabSourceWindowState.set(tabId, getWindowAutoGroupingState(detachInfo.oldWindowId));
+    const oldWindowId = detachInfo.oldWindowId;
+    detachedTabSourceWindowState.set(tabId, getWindowAutoGroupingState(oldWindowId));
+
+    if (getWindowAutoGroupingState(oldWindowId)) {
+      rebalanceSingletonDomainGroupsInWindow(oldWindowId).catch(() => {});
+    }
 
     setTimeout(() => {
       detachedTabSourceWindowState.delete(tabId);
@@ -1196,7 +1202,7 @@ async function resolveLastFocusedWindowId() {
 }
 
 function isDedicatedDomainGroup(groupTabs, targetDomain) {
-  if (!Array.isArray(groupTabs) || groupTabs.length < 2 || typeof targetDomain !== 'string' || targetDomain.length === 0) {
+  if (!Array.isArray(groupTabs) || groupTabs.length < 1 || typeof targetDomain !== 'string' || targetDomain.length === 0) {
     return false;
   }
 
