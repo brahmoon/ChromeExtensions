@@ -1055,14 +1055,40 @@ chrome.tabs.onMoved.addListener((tabId) => {
   persistTabListSyncEntity('moved').catch(() => {});
 });
 
-chrome.tabs.onAttached.addListener((tabId) => {
+chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
   syncTabGroupIdCacheForTabId(tabId).catch(() => {});
-  persistTabListSyncEntity('attached').catch(() => {});
+
+  (async () => {
+    let hasGroupingChanges = false;
+
+    if (autoDomainGroupingEnabled && Number.isFinite(attachInfo?.newWindowId)) {
+      const changed = await groupTabsByDomain({
+        scope: GROUP_SCOPE_CURRENT,
+        windowId: attachInfo.newWindowId,
+      });
+      hasGroupingChanges = hasGroupingChanges || Boolean(changed);
+    }
+
+    await persistTabListSyncEntity(hasGroupingChanges ? 'attached-regrouped' : 'attached');
+  })().catch(() => {});
 });
 
-chrome.tabs.onDetached.addListener((tabId) => {
+chrome.tabs.onDetached.addListener((tabId, detachInfo) => {
   syncTabGroupIdCacheForTabId(tabId).catch(() => {});
-  persistTabListSyncEntity('detached').catch(() => {});
+
+  (async () => {
+    let hasGroupingChanges = false;
+
+    if (autoDomainGroupingEnabled && Number.isFinite(detachInfo?.oldWindowId)) {
+      const changed = await groupTabsByDomain({
+        scope: GROUP_SCOPE_CURRENT,
+        windowId: detachInfo.oldWindowId,
+      });
+      hasGroupingChanges = hasGroupingChanges || Boolean(changed);
+    }
+
+    await persistTabListSyncEntity(hasGroupingChanges ? 'detached-regrouped' : 'detached');
+  })().catch(() => {});
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -1438,6 +1464,14 @@ async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
     } else if (sourceIsSingleton && sourceIsMisc && miscSameDomainTabIds.length > 0) {
       await rebalanceSingletonDomainGroupsInWindow(tab.windowId);
       hasGroupingChanges = true;
+    }
+
+    if (!hasGroupingChanges && requireActiveContext) {
+      const regrouped = await groupTabsByDomain({
+        scope: GROUP_SCOPE_CURRENT,
+        windowId: tab.windowId,
+      });
+      hasGroupingChanges = Boolean(regrouped);
     }
 
     if (hasGroupingChanges) {
