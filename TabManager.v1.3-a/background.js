@@ -1386,14 +1386,29 @@ async function resolveGroupingDestination(windowId, tab, tabsInWindow) {
   }
 
   const sourceGroupId = Number.isFinite(tab.groupId) && tab.groupId >= 0 ? tab.groupId : null;
+  const groupedTabs = collectGroupTabsById(tabsInWindow);
+  const sourceTabs = Number.isFinite(sourceGroupId) ? (groupedTabs.get(sourceGroupId) || []) : [];
+
+  const currentMiscGroupId = findMiscDomainGroupId(tabsInWindow);
+  const sourceIsMisc = Number.isFinite(sourceGroupId) && Number.isFinite(currentMiscGroupId) && sourceGroupId === currentMiscGroupId;
+
+  const miscSearchExcludeGroupId = sourceIsMisc ? null : sourceGroupId;
+
+  if (Number.isFinite(sourceGroupId) && !sourceIsMisc && isDedicatedDomainGroup(sourceTabs, tabDomain)) {
+    const miscTabs = Number.isFinite(currentMiscGroupId) ? (groupedTabs.get(currentMiscGroupId) || []) : [];
+    const migrateTabIds = collectSameDomainTabIdsInGroup(miscTabs, tabDomain, {
+      excludeTabId: tab.id,
+    });
+
+    return { groupId: sourceGroupId, kind: 'domain', seedTabIds: [], migrateTabIds };
+  }
 
   const sameDomainGroupId = findDomainGroupIdInWindow(tabsInWindow, tabDomain, {
-    excludeGroupId: sourceGroupId,
+    excludeGroupId: miscSearchExcludeGroupId,
   });
   if (Number.isFinite(sameDomainGroupId) && sameDomainGroupId >= 0) {
-    const groupedTabs = collectGroupTabsById(tabsInWindow, { excludeGroupId: sourceGroupId });
     const miscGroupId = findMiscDomainGroupId(tabsInWindow, {
-      excludeGroupId: sourceGroupId,
+      excludeGroupId: miscSearchExcludeGroupId,
     });
     const miscTabs = Number.isFinite(miscGroupId) ? (groupedTabs.get(miscGroupId) || []) : [];
     const migrateTabIds = collectSameDomainTabIdsInGroup(miscTabs, tabDomain, {
@@ -1404,10 +1419,9 @@ async function resolveGroupingDestination(windowId, tab, tabsInWindow) {
   }
 
   const miscGroupId = findMiscDomainGroupId(tabsInWindow, {
-    excludeGroupId: sourceGroupId,
+    excludeGroupId: miscSearchExcludeGroupId,
   });
   if (Number.isFinite(miscGroupId) && miscGroupId >= 0) {
-    const groupedTabs = collectGroupTabsById(tabsInWindow, { excludeGroupId: sourceGroupId });
     const miscTabs = groupedTabs.get(miscGroupId) || [];
     const seedTabIds = collectSameDomainTabIdsInGroup(miscTabs, tabDomain, {
       excludeTabId: tab.id,
@@ -1431,6 +1445,7 @@ async function resolveGroupingDestination(windowId, tab, tabsInWindow) {
 
   return null;
 }
+
 
 async function moveTabToGroupEnd(windowId, groupId, tabId) {
   if (!Number.isFinite(windowId) || !Number.isFinite(groupId) || groupId < 0 || !Number.isFinite(tabId)) {
