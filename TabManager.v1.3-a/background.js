@@ -1394,7 +1394,7 @@ async function resolveGroupingDestination(windowId, tab, tabsInWindow) {
 
   const miscSearchExcludeGroupId = sourceIsMisc ? null : sourceGroupId;
 
-  if (Number.isFinite(sourceGroupId) && !sourceIsMisc && isDedicatedDomainGroup(sourceTabs, tabDomain)) {
+  if (Number.isFinite(sourceGroupId) && !sourceIsMisc && sourceTabs.length > 1 && isDedicatedDomainGroup(sourceTabs, tabDomain)) {
     const miscTabs = Number.isFinite(currentMiscGroupId) ? (groupedTabs.get(currentMiscGroupId) || []) : [];
     const migrateTabIds = collectSameDomainTabIdsInGroup(miscTabs, tabDomain, {
       excludeTabId: tab.id,
