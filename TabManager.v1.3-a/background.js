@@ -1713,12 +1713,21 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     }
 
     if (!wasEnabled && autoDomainGroupingEnabled) {
-      groupTabsByDomain({ scope: GROUP_SCOPE_ALL })
-        .then((hasGroupingChanges) => {
-          if (hasGroupingChanges) {
-            return persistTabListSyncEntity('auto-domain-grouping-enabled');
+      resolveLastFocusedWindowId()
+        .then((focusedWindowId) => {
+          if (!Number.isFinite(focusedWindowId)) {
+            return null;
           }
-          return null;
+
+          return groupTabsByDomain({
+            scope: GROUP_SCOPE_CURRENT,
+            windowId: focusedWindowId,
+          }).then((hasGroupingChanges) => {
+            if (hasGroupingChanges) {
+              return persistTabListSyncEntity('auto-domain-grouping-enabled');
+            }
+            return null;
+          });
         })
         .catch((error) => {
           console.debug('Failed to run initial auto domain grouping:', error);
