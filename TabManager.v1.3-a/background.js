@@ -1318,7 +1318,7 @@ function collectSameDomainTabIdsInGroup(groupTabs, targetDomain, { excludeTabId 
 
 
 async function normalizeSingletonDomainGroupsInWindow(windowId, tabsInWindow) {
-  if (!Number.isFinite(windowId) || !Array.isArray(tabsInWindow) || !chrome.tabs?.ungroup) {
+  if (!Number.isFinite(windowId) || !Array.isArray(tabsInWindow) || !chrome.tabs?.group) {
     return false;
   }
 
@@ -1336,15 +1336,17 @@ async function normalizeSingletonDomainGroupsInWindow(windowId, tabsInWindow) {
     }
   }
 
+  const miscGroupId = findMiscDomainGroupId(tabsInWindow);
   const singletonTabIds = [];
-  for (const [, groupTabs] of groupedTabs.entries()) {
-    if (!Array.isArray(groupTabs) || groupTabs.length !== 1) {
+
+  for (const [groupId, groupTabs] of groupedTabs.entries()) {
+    if (!Array.isArray(groupTabs) || groupTabs.length !== 1 || (Number.isFinite(miscGroupId) && groupId === miscGroupId)) {
       continue;
     }
 
     const loneTab = groupTabs[0];
     const domain = extractDomainForGrouping(loneTab.url || loneTab.pendingUrl);
-    if (!domain) {
+    if (!domain || !Number.isFinite(loneTab.id)) {
       continue;
     }
 
@@ -1356,10 +1358,14 @@ async function normalizeSingletonDomainGroupsInWindow(windowId, tabsInWindow) {
   }
 
   try {
-    await chrome.tabs.ungroup(singletonTabIds);
+    if (Number.isFinite(miscGroupId) && miscGroupId >= 0) {
+      await chrome.tabs.group({ tabIds: singletonTabIds, groupId: miscGroupId });
+    } else {
+      await chrome.tabs.group({ tabIds: singletonTabIds });
+    }
     return true;
   } catch (error) {
-    console.debug('Failed to normalize singleton domain groups:', error);
+    console.debug('Failed to normalize singleton domain groups into misc:', error);
     return false;
   }
 }
