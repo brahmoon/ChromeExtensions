@@ -15,6 +15,8 @@ const PREVIEW_CLEAR_CACHE_MESSAGE = 'TabManagerClearPreviewCache';
 const PREVIEW_CAPTURE_OPTIONS = { format: 'jpeg', quality: 45 };
 const PREVIEW_QUEUE_DELAY_MS = 800;
 const PREVIEW_RETRY_DELAY_MS = 4000;
+const PREVIEW_RETRY_DELAY_DRAG_MS = 1200;
+const PREVIEW_RETRY_DELAY_QUOTA_MS = 2500;
 const PREVIEW_POST_LOAD_CAPTURE_DELAY_MS = 350;
 const PREVIEW_MAX_CACHE_ENTRIES = 40;
 const PREVIEW_PROTOCOL_DENYLIST = [/^chrome:/i, /^edge:/i, /^about:/i, /^view-source:/i, /^devtools:/i];
@@ -614,6 +616,13 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+
+function isTransientTabEditError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('tabs cannot be edited right now') || message.includes('user may be dragging a tab');
+}
+
+
 async function cropPreviewImageToViewportLeftArea(imageDataUrl) {
   if (typeof imageDataUrl !== 'string' || imageDataUrl.length === 0) {
     return imageDataUrl;
@@ -665,7 +674,7 @@ function moveTabToQueueFront(tabId) {
   }
 }
 
-function schedulePreviewRetry(tabId) {
+function schedulePreviewRetry(tabId, { delayMs = PREVIEW_RETRY_DELAY_MS } = {}) {
   if (previewRetryTimeouts.has(tabId) || !previewEnabled) {
     return;
   }
@@ -676,7 +685,7 @@ function schedulePreviewRetry(tabId) {
       return;
     }
     enqueuePreview(tabId);
-  }, PREVIEW_RETRY_DELAY_MS);
+  }, Math.max(250, Number.isFinite(delayMs) ? delayMs : PREVIEW_RETRY_DELAY_MS));
 
   previewRetryTimeouts.set(tabId, timeout);
 }
@@ -713,10 +722,21 @@ async function capturePreviewForTab(tabId) {
 
     if (captureError) {
       const captureMessage = String(captureError?.message || '');
+      const lowerMessage = captureMessage.toLowerCase();
+
+      if (isTransientTabEditError(captureError)) {
+        console.debug('Capture deferred while tab is being edited:', captureError);
+        return 'retry-drag';
+      }
+
+      if (lowerMessage.includes('max_capture_visible_tab_calls_per_second') || lowerMessage.includes('quota')) {
+        console.debug('Capture throttled by quota, retrying later:', captureError);
+        return 'retry-quota';
+      }
+
       if (!captureMessage.includes('No active tab')) {
         console.error('Failed to capture preview:', captureError);
       }
-      const lowerMessage = captureMessage.toLowerCase();
       if (
         lowerMessage.includes('permission') &&
         (lowerMessage.includes('required') || lowerMessage.includes('activetab'))
@@ -789,6 +809,10 @@ async function processPreviewQueue() {
       const result = await capturePreviewForTab(tabId);
       if (previewEnabled && result === 'retry') {
         schedulePreviewRetry(tabId);
+      } else if (previewEnabled && result === 'retry-drag') {
+        schedulePreviewRetry(tabId, { delayMs: PREVIEW_RETRY_DELAY_DRAG_MS });
+      } else if (previewEnabled && result === 'retry-quota') {
+        schedulePreviewRetry(tabId, { delayMs: PREVIEW_RETRY_DELAY_QUOTA_MS });
       }
 
       if (previewQueue.length > 0) {
@@ -917,16 +941,7 @@ async function sendPanelCommand(tabId, type) {
   } catch (error) {
     const message = error?.message || '';
     if (message.includes('Could not establish connection')) {
-      try {
-        await chrome.scripting.executeScript({
-          target: { tabId },
-          files: ['content.js'],
-        });
-        await chrome.tabs.sendMessage(tabId, { type });
-        return true;
-      } catch (injectError) {
-        console.error('Failed to inject content script for panel command:', injectError);
-      }
+      console.debug('Panel command skipped because content receiver is unavailable:', message);
       return false;
     }
 
@@ -1665,6 +1680,20 @@ async function autoGroupTabByDomainCore(tab, { requireActiveContext } = {}) {
       await persistTabListSyncEntity('auto-domain-grouping');
     }
   } catch (error) {
+    if (isTransientTabEditError(error) && Number.isFinite(tab?.id)) {
+      autoGroupingPendingTabIds.add(tab.id);
+      setTimeout(() => {
+        chrome.tabs.get(tab.id)
+          .then((freshTab) => {
+            if (freshTab) {
+              autoGroupTabByDomain(freshTab, { requireActiveContext: false }).catch(() => {});
+            }
+          })
+          .catch(() => {});
+      }, 180);
+      return;
+    }
+
     console.debug('Failed to auto group tab by domain:', error);
   }
 }
