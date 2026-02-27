@@ -1632,7 +1632,13 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     autoDomainGroupingEnabled = Boolean(autoGroupChange.newValue);
 
     if (!wasEnabled && autoDomainGroupingEnabled) {
-      groupTabsByDomain({ scope: GROUP_SCOPE_ALL, windowId: null })
+      resolveWindowIdForGrouping(null, null)
+        .then((windowId) => {
+          if (!Number.isFinite(windowId)) {
+            return null;
+          }
+          return groupTabsByDomain({ scope: GROUP_SCOPE_CURRENT, windowId });
+        })
         .then((hasGroupingChanges) => {
           if (hasGroupingChanges) {
             return persistTabListSyncEntity('auto-domain-grouping-enabled');
