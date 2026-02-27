@@ -1125,8 +1125,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     return;
   }
 
-  const isBackgroundNewTab = !tab.active && Number.isFinite(tab.openerTabId);
-  autoGroupTabByDomain(tab, { requireActiveContext: !isBackgroundNewTab }).catch(() => {});
+  autoGroupTabByDomain(tab, { requireActiveContext: false }).catch(() => {});
 });
 
 function extractDomainForGrouping(url) {
@@ -1268,6 +1267,56 @@ function findMiscDomainGroupId(tabsInWindow, { excludeGroupId } = {}) {
   return null;
 }
 
+function collectGroupTabsById(tabsInWindow, { excludeGroupId } = {}) {
+  const groupedTabs = new Map();
+
+  if (!Array.isArray(tabsInWindow)) {
+    return groupedTabs;
+  }
+
+  for (const item of tabsInWindow) {
+    if (!item || item.pinned || !Number.isFinite(item.id) || !Number.isFinite(item.groupId) || item.groupId < 0) {
+      continue;
+    }
+    if (Number.isFinite(excludeGroupId) && item.groupId === excludeGroupId) {
+      continue;
+    }
+
+    const existing = groupedTabs.get(item.groupId);
+    if (existing) {
+      existing.push(item);
+    } else {
+      groupedTabs.set(item.groupId, [item]);
+    }
+  }
+
+  return groupedTabs;
+}
+
+function collectSameDomainTabIdsInGroup(groupTabs, targetDomain, { excludeTabId } = {}) {
+  if (!Array.isArray(groupTabs) || typeof targetDomain !== 'string' || targetDomain.length === 0) {
+    return [];
+  }
+
+  const sameDomainIds = [];
+  for (const groupTab of groupTabs) {
+    if (!groupTab || !Number.isFinite(groupTab.id)) {
+      continue;
+    }
+    if (Number.isFinite(excludeTabId) && groupTab.id === excludeTabId) {
+      continue;
+    }
+
+    const groupDomain = extractDomainForGrouping(groupTab.url || groupTab.pendingUrl);
+    if (groupDomain === targetDomain) {
+      sameDomainIds.push(groupTab.id);
+    }
+  }
+
+  return sameDomainIds;
+}
+
+
 async function normalizeSingletonDomainGroupsInWindow(windowId, tabsInWindow) {
   if (!Number.isFinite(windowId) || !Array.isArray(tabsInWindow) || !chrome.tabs?.ungroup) {
     return false;
@@ -1331,20 +1380,30 @@ async function resolveGroupingDestination(windowId, tab, tabsInWindow) {
     excludeGroupId: sourceGroupId,
   });
   if (Number.isFinite(sameDomainGroupId) && sameDomainGroupId >= 0) {
-    return { groupId: sameDomainGroupId, kind: 'domain' };
+    return { groupId: sameDomainGroupId, kind: 'domain', seedTabIds: [] };
   }
 
   const miscGroupId = findMiscDomainGroupId(tabsInWindow, {
     excludeGroupId: sourceGroupId,
   });
   if (Number.isFinite(miscGroupId) && miscGroupId >= 0) {
-    return { groupId: miscGroupId, kind: 'misc' };
+    const groupedTabs = collectGroupTabsById(tabsInWindow, { excludeGroupId: sourceGroupId });
+    const miscTabs = groupedTabs.get(miscGroupId) || [];
+    const seedTabIds = collectSameDomainTabIdsInGroup(miscTabs, tabDomain, {
+      excludeTabId: tab.id,
+    });
+
+    if (seedTabIds.length > 0) {
+      return { groupId: null, kind: 'domain-from-misc', seedTabIds };
+    }
+
+    return { groupId: miscGroupId, kind: 'misc', seedTabIds: [] };
   }
 
   try {
     const createdGroupId = await chrome.tabs.group({ tabIds: [tab.id] });
     if (Number.isFinite(createdGroupId) && createdGroupId >= 0) {
-      return { groupId: createdGroupId, kind: 'misc-created' };
+      return { groupId: createdGroupId, kind: 'misc-created', seedTabIds: [] };
     }
   } catch (error) {
     console.debug('Failed to create misc group for tab:', error);
@@ -1452,19 +1511,41 @@ async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
     }
 
     const destination = await resolveGroupingDestination(tab.windowId, tab, tabsInWindow);
-    if (!destination || !Number.isFinite(destination.groupId) || destination.groupId < 0) {
+    if (!destination) {
       return;
     }
 
-    if (Number.isFinite(tab.groupId) && tab.groupId === destination.groupId) {
+    if (Number.isFinite(destination.groupId) && destination.groupId < 0) {
+      return;
+    }
+
+    if (Number.isFinite(tab.groupId) && Number.isFinite(destination.groupId) && tab.groupId === destination.groupId) {
       if (normalized) {
         await persistTabListSyncEntity('auto-domain-grouping');
       }
       return;
     }
 
-    const groupedId = await chrome.tabs.group({ tabIds: [tab.id], groupId: destination.groupId });
-    const resolvedGroupId = Number.isFinite(groupedId) ? groupedId : destination.groupId;
+    const seedTabIds = Array.isArray(destination.seedTabIds)
+      ? destination.seedTabIds.filter((id) => Number.isFinite(id))
+      : [];
+
+    let resolvedGroupId = Number.isFinite(destination.groupId) ? destination.groupId : null;
+    if (destination.kind === 'domain-from-misc' && seedTabIds.length > 0) {
+      const createTabIds = [...new Set([...seedTabIds, tab.id])];
+      const createdDomainGroupId = await chrome.tabs.group({ tabIds: createTabIds });
+      if (Number.isFinite(createdDomainGroupId)) {
+        resolvedGroupId = createdDomainGroupId;
+      }
+    } else if (Number.isFinite(destination.groupId)) {
+      const groupedId = await chrome.tabs.group({ tabIds: [tab.id], groupId: destination.groupId });
+      resolvedGroupId = Number.isFinite(groupedId) ? groupedId : destination.groupId;
+    }
+
+    if (!Number.isFinite(resolvedGroupId) || resolvedGroupId < 0) {
+      return;
+    }
+
     await moveTabToGroupEnd(tab.windowId, resolvedGroupId, tab.id);
     await persistTabListSyncEntity('auto-domain-grouping');
   } catch (error) {
