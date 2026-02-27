@@ -985,6 +985,14 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 
   await persistActiveTabSyncEntity(tabId, 'activated');
   await syncTabGroupIdCacheForTabId(tabId);
+
+  try {
+    const activatedTab = await chrome.tabs.get(tabId);
+    await autoGroupTabByDomain(activatedTab, { requireActiveContext: true });
+  } catch (error) {
+    console.debug('Failed to auto group on tab activation:', error);
+  }
+
   await handoffPanelToTab(tabId);
   await persistTabListSyncEntity('activated');
 });
@@ -1312,9 +1320,19 @@ async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
       return;
     }
 
-    const activeWindowId = await resolveLastFocusedWindowId();
-    if (!Number.isFinite(activeWindowId) || activeWindowId !== tab.windowId) {
-      return;
+    let tabWindowIsFocused = false;
+    try {
+      const tabWindow = await chrome.windows.get(tab.windowId);
+      tabWindowIsFocused = Boolean(tabWindow?.focused);
+    } catch (error) {
+      tabWindowIsFocused = false;
+    }
+
+    if (!tabWindowIsFocused) {
+      const activeWindowId = await resolveLastFocusedWindowId();
+      if (Number.isFinite(activeWindowId) && activeWindowId !== tab.windowId) {
+        return;
+      }
     }
   }
 
@@ -1614,18 +1632,12 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     autoDomainGroupingEnabled = Boolean(autoGroupChange.newValue);
 
     if (!wasEnabled && autoDomainGroupingEnabled) {
-      resolveLastFocusedWindowId()
-        .then((windowId) => {
-          if (!Number.isFinite(windowId)) {
-            return;
+      groupTabsByDomain({ scope: GROUP_SCOPE_ALL, windowId: null })
+        .then((hasGroupingChanges) => {
+          if (hasGroupingChanges) {
+            return persistTabListSyncEntity('auto-domain-grouping-enabled');
           }
-          return groupTabsByDomain({ scope: GROUP_SCOPE_CURRENT, windowId })
-            .then((hasGroupingChanges) => {
-              if (hasGroupingChanges) {
-                return persistTabListSyncEntity('auto-domain-grouping-enabled');
-              }
-              return null;
-            });
+          return null;
         })
         .catch((error) => {
           console.debug('Failed to run initial auto domain grouping:', error);
