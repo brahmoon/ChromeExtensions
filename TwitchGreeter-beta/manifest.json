@@ -1,5 +1,5 @@
 {
-  "name": "Twitch Greeter",
+  "name": "Twitch Greeter (Beta)",
   "version": "1.4",
   "description": "配信者がTwitchのチャット欄のリスナーへの挨拶を管理するためのツール",
   "manifest_version": 3,
