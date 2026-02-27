@@ -22,7 +22,6 @@ const GROUP_TABS_BY_DOMAIN_MESSAGE = 'TabManagerGroupTabsByDomain';
 const GROUP_SCOPE_CURRENT = 'current';
 const GROUP_SCOPE_ALL = 'all';
 const AUTO_DOMAIN_GROUP_STORAGE_KEY = 'tabManagerAutoDomainGrouping';
-const EXTENSION_ELEMENT_ATTRIBUTE = 'data-tab-manager-element';
 const PREVIEW_REMOVAL_REASON_UNSUPPORTED = 'unsupported';
 const PREVIEW_REMOVAL_REASON_CLOSED = 'closed';
 const PREVIEW_REMOVAL_REASON_REFRESHED = 'refreshed';
@@ -613,73 +612,47 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function toggleTabManagerVisibility(tabId, hidden) {
-  if (typeof tabId !== 'number') {
-    return;
+async function cropPreviewImageToViewportLeftArea(imageDataUrl) {
+  if (typeof imageDataUrl !== 'string' || imageDataUrl.length === 0) {
+    return imageDataUrl;
   }
+
+  const panelWidth = 400;
 
   try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      func: (shouldHide, attributeName) => {
-        if (typeof attributeName !== 'string' || attributeName.length === 0) {
-          return;
-        }
+    const response = await fetch(imageDataUrl);
+    const blob = await response.blob();
+    const bitmap = await createImageBitmap(blob);
 
-        const selector = `[${attributeName}]`;
-        const elements = Array.from(document.querySelectorAll(selector));
-
-        for (const element of elements) {
-          if (!element) {
-            continue;
-          }
-
-          if (shouldHide) {
-            const previousStyle = element.getAttribute('style');
-            if (previousStyle != null) {
-              element.setAttribute('data-tab-manager-capture-style', previousStyle);
-            } else {
-              element.removeAttribute('data-tab-manager-capture-style');
-            }
-            element.setAttribute('data-tab-manager-capture-hidden', '1');
-            element.style.transition = 'none';
-            element.style.opacity = '0';
-            element.style.pointerEvents = 'none';
-          } else {
-            const storedStyle = element.getAttribute('data-tab-manager-capture-style');
-            if (storedStyle != null) {
-              if (storedStyle === '') {
-                element.removeAttribute('style');
-              } else {
-                element.setAttribute('style', storedStyle);
-              }
-              element.removeAttribute('data-tab-manager-capture-style');
-            } else if (element.hasAttribute('data-tab-manager-capture-hidden')) {
-              element.style.removeProperty('opacity');
-              element.style.removeProperty('pointer-events');
-              element.style.removeProperty('transition');
-            }
-            element.removeAttribute('data-tab-manager-capture-hidden');
-          }
-        }
-      },
-      args: [Boolean(hidden), EXTENSION_ELEMENT_ATTRIBUTE],
-    });
-  } catch (error) {
-    const message = error?.message || '';
-    if (!message.includes('No tab with id') && !message.includes('The tab was closed')) {
-      console.debug('Failed to toggle TabManager visibility for capture:', error);
+    const cropWidth = Math.max(1, bitmap.width - panelWidth);
+    if (cropWidth >= bitmap.width) {
+      bitmap.close();
+      return imageDataUrl;
     }
+
+    const canvas = new OffscreenCanvas(cropWidth, bitmap.height);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      bitmap.close();
+      return imageDataUrl;
+    }
+
+    ctx.drawImage(bitmap, 0, 0, cropWidth, bitmap.height, 0, 0, cropWidth, bitmap.height);
+    bitmap.close();
+    const croppedBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.82 });
+
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : imageDataUrl);
+      reader.onerror = () => reject(reader.error || new Error('Failed to read preview blob.'));
+      reader.readAsDataURL(croppedBlob);
+    });
+
+    return typeof dataUrl === 'string' && dataUrl.length > 0 ? dataUrl : imageDataUrl;
+  } catch (error) {
+    console.debug('Failed to crop preview image:', error);
+    return imageDataUrl;
   }
-}
-
-async function prepareTabForCapture(tabId) {
-  await toggleTabManagerVisibility(tabId, true);
-  await delay(60);
-}
-
-async function restoreTabAfterCapture(tabId) {
-  await toggleTabManagerVisibility(tabId, false);
 }
 
 function moveTabToQueueFront(tabId) {
@@ -730,12 +703,10 @@ async function capturePreviewForTab(tabId) {
     let image;
     let captureError = null;
     try {
-      await prepareTabForCapture(tabId);
       image = await chrome.tabs.captureVisibleTab(tab.windowId, PREVIEW_CAPTURE_OPTIONS);
+      image = await cropPreviewImageToViewportLeftArea(image);
     } catch (error) {
       captureError = error;
-    } finally {
-      await restoreTabAfterCapture(tabId);
     }
 
     if (captureError) {
@@ -1145,10 +1116,17 @@ chrome.tabs.onDetached.addListener((tabId, detachInfo) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.url && tab) {
-    const isBackgroundNewTab = !tab.active && Number.isFinite(tab.openerTabId);
-    autoGroupTabByDomain(tab, { requireActiveContext: !isBackgroundNewTab }).catch(() => {});
+  if (!tab) {
+    return;
   }
+
+  const shouldEvaluateGrouping = Boolean(changeInfo.url) || changeInfo.status === 'complete';
+  if (!shouldEvaluateGrouping) {
+    return;
+  }
+
+  const isBackgroundNewTab = !tab.active && Number.isFinite(tab.openerTabId);
+  autoGroupTabByDomain(tab, { requireActiveContext: !isBackgroundNewTab }).catch(() => {});
 });
 
 function extractDomainForGrouping(url) {
@@ -1216,6 +1194,37 @@ function isDedicatedDomainGroup(groupTabs, targetDomain) {
   return true;
 }
 
+function findDomainGroupIdInWindow(tabsInWindow, targetDomain, { excludeGroupId } = {}) {
+  if (!Array.isArray(tabsInWindow) || typeof targetDomain !== 'string' || targetDomain.length === 0) {
+    return null;
+  }
+
+  const groupedTabs = new Map();
+  for (const item of tabsInWindow) {
+    if (!item || item.pinned || !Number.isFinite(item.id) || !Number.isFinite(item.groupId) || item.groupId < 0) {
+      continue;
+    }
+    if (Number.isFinite(excludeGroupId) && item.groupId === excludeGroupId) {
+      continue;
+    }
+
+    const existing = groupedTabs.get(item.groupId);
+    if (existing) {
+      existing.push(item);
+    } else {
+      groupedTabs.set(item.groupId, [item]);
+    }
+  }
+
+  for (const [groupId, groupTabs] of groupedTabs.entries()) {
+    if (isDedicatedDomainGroup(groupTabs, targetDomain)) {
+      return groupId;
+    }
+  }
+
+  return null;
+}
+
 function findMiscDomainGroupId(tabsInWindow, { excludeGroupId } = {}) {
   if (!Array.isArray(tabsInWindow) || tabsInWindow.length === 0) {
     return null;
@@ -1259,31 +1268,89 @@ function findMiscDomainGroupId(tabsInWindow, { excludeGroupId } = {}) {
   return null;
 }
 
-async function moveSingleTabToMiscDomainGroup(windowId, tabId, sourceGroupId) {
-  if (!Number.isFinite(windowId) || !Number.isFinite(tabId) || tabId < 0) {
-    return;
+async function normalizeSingletonDomainGroupsInWindow(windowId, tabsInWindow) {
+  if (!Number.isFinite(windowId) || !Array.isArray(tabsInWindow) || !chrome.tabs?.ungroup) {
+    return false;
   }
 
-  let tabsInWindow;
+  const groupedTabs = new Map();
+  for (const tab of tabsInWindow) {
+    if (!tab || tab.pinned || !Number.isFinite(tab.id) || !Number.isFinite(tab.groupId) || tab.groupId < 0) {
+      continue;
+    }
+
+    const existing = groupedTabs.get(tab.groupId);
+    if (existing) {
+      existing.push(tab);
+    } else {
+      groupedTabs.set(tab.groupId, [tab]);
+    }
+  }
+
+  const singletonTabIds = [];
+  for (const [, groupTabs] of groupedTabs.entries()) {
+    if (!Array.isArray(groupTabs) || groupTabs.length !== 1) {
+      continue;
+    }
+
+    const loneTab = groupTabs[0];
+    const domain = extractDomainForGrouping(loneTab.url || loneTab.pendingUrl);
+    if (!domain) {
+      continue;
+    }
+
+    singletonTabIds.push(loneTab.id);
+  }
+
+  if (singletonTabIds.length === 0) {
+    return false;
+  }
+
   try {
-    tabsInWindow = await chrome.tabs.query({ windowId });
+    await chrome.tabs.ungroup(singletonTabIds);
+    return true;
   } catch (error) {
-    return;
+    console.debug('Failed to normalize singleton domain groups:', error);
+    return false;
+  }
+}
+
+async function resolveGroupingDestination(windowId, tab, tabsInWindow) {
+  if (!tab || !Number.isFinite(tab.id) || !Array.isArray(tabsInWindow)) {
+    return null;
   }
 
-  const miscGroupId = findMiscDomainGroupId(tabsInWindow, { excludeGroupId: sourceGroupId });
-  if (!Number.isFinite(miscGroupId) || miscGroupId < 0) {
-    return;
+  const tabDomain = extractDomainForGrouping(tab.url || tab.pendingUrl);
+  if (!tabDomain) {
+    return null;
+  }
+
+  const sourceGroupId = Number.isFinite(tab.groupId) && tab.groupId >= 0 ? tab.groupId : null;
+
+  const sameDomainGroupId = findDomainGroupIdInWindow(tabsInWindow, tabDomain, {
+    excludeGroupId: sourceGroupId,
+  });
+  if (Number.isFinite(sameDomainGroupId) && sameDomainGroupId >= 0) {
+    return { groupId: sameDomainGroupId, kind: 'domain' };
+  }
+
+  const miscGroupId = findMiscDomainGroupId(tabsInWindow, {
+    excludeGroupId: sourceGroupId,
+  });
+  if (Number.isFinite(miscGroupId) && miscGroupId >= 0) {
+    return { groupId: miscGroupId, kind: 'misc' };
   }
 
   try {
-    await chrome.tabs.group({
-      tabIds: [tabId],
-      groupId: miscGroupId,
-    });
+    const createdGroupId = await chrome.tabs.group({ tabIds: [tab.id] });
+    if (Number.isFinite(createdGroupId) && createdGroupId >= 0) {
+      return { groupId: createdGroupId, kind: 'misc-created' };
+    }
   } catch (error) {
-    console.debug('Failed to move lone tab into misc domain group:', error);
+    console.debug('Failed to create misc group for tab:', error);
   }
+
+  return null;
 }
 
 async function moveTabToGroupEnd(windowId, groupId, tabId) {
@@ -1337,52 +1404,7 @@ async function rebalanceSingletonDomainGroupsInWindow(windowId) {
     return;
   }
 
-  const miscGroupId = findMiscDomainGroupId(tabsInWindow);
-  if (!Number.isFinite(miscGroupId) || miscGroupId < 0) {
-    return;
-  }
-
-  const groupedTabs = new Map();
-  for (const tab of tabsInWindow) {
-    if (!tab || tab.pinned || !Number.isFinite(tab.id) || !Number.isFinite(tab.groupId) || tab.groupId < 0) {
-      continue;
-    }
-
-    const existing = groupedTabs.get(tab.groupId);
-    if (existing) {
-      existing.push(tab);
-    } else {
-      groupedTabs.set(tab.groupId, [tab]);
-    }
-  }
-
-  const singletonTabIds = [];
-  for (const [groupId, groupTabs] of groupedTabs.entries()) {
-    if (groupId === miscGroupId || !Array.isArray(groupTabs) || groupTabs.length !== 1) {
-      continue;
-    }
-
-    const loneTab = groupTabs[0];
-    const domain = extractDomainForGrouping(loneTab.url || loneTab.pendingUrl);
-    if (!domain) {
-      continue;
-    }
-
-    singletonTabIds.push(loneTab.id);
-  }
-
-  if (singletonTabIds.length === 0) {
-    return;
-  }
-
-  try {
-    await chrome.tabs.group({
-      tabIds: singletonTabIds,
-      groupId: miscGroupId,
-    });
-  } catch (error) {
-    console.debug('Failed to rebalance singleton domain groups:', error);
-  }
+  await normalizeSingletonDomainGroupsInWindow(windowId, tabsInWindow);
 }
 
 async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
@@ -1410,112 +1432,41 @@ async function autoGroupTabByDomain(tab, { requireActiveContext } = {}) {
   }
 
   const url = typeof tab.url === 'string' && tab.url.length > 0 ? tab.url : tab.pendingUrl;
-  const domain = extractDomainForGrouping(url);
-  if (!domain) {
+  if (!extractDomainForGrouping(url)) {
     return;
   }
 
-  if (!chrome.tabs?.query || !chrome.tabs?.group || !chrome.tabs?.ungroup) {
+  if (!chrome.tabs?.query || !chrome.tabs?.group) {
     return;
-  }
-
-  let tabsInWindow;
-  try {
-    tabsInWindow = await chrome.tabs.query({ windowId: tab.windowId });
-  } catch (error) {
-    return;
-  }
-
-  const sourceGroupId = Number.isFinite(tab.groupId) && tab.groupId >= 0 ? tab.groupId : null;
-  const miscGroupId = findMiscDomainGroupId(tabsInWindow, { excludeGroupId: null });
-  const groupedTabs = new Map();
-  for (const item of tabsInWindow) {
-    if (!item || !Number.isFinite(item.groupId) || item.groupId < 0) {
-      continue;
-    }
-    const existing = groupedTabs.get(item.groupId);
-    if (existing) {
-      existing.push(item);
-    } else {
-      groupedTabs.set(item.groupId, [item]);
-    }
-  }
-
-  const sourceTabs = sourceGroupId !== null ? (groupedTabs.get(sourceGroupId) || []) : [];
-  const sourceIsSingleton = sourceGroupId !== null && sourceTabs.length === 1;
-  const sourceIsMisc = sourceGroupId !== null && sourceGroupId === miscGroupId;
-  const sourceIsDedicatedDomain =
-    sourceGroupId !== null && !sourceIsMisc && isDedicatedDomainGroup(sourceTabs, domain);
-
-  let targetGroupId = null;
-  for (const [groupId, groupTabs] of groupedTabs.entries()) {
-    if (groupId === miscGroupId || groupId === sourceGroupId) {
-      continue;
-    }
-    if (isDedicatedDomainGroup(groupTabs, domain)) {
-      targetGroupId = groupId;
-      break;
-    }
-  }
-
-  const miscSameDomainTabIds = [];
-  if (Number.isFinite(miscGroupId) && miscGroupId >= 0) {
-    const miscTabs = groupedTabs.get(miscGroupId) || [];
-    for (const miscTab of miscTabs) {
-      if (!miscTab || miscTab.pinned || !Number.isFinite(miscTab.id) || miscTab.id === tab.id) {
-        continue;
-      }
-      const miscDomain = extractDomainForGrouping(miscTab.url || miscTab.pendingUrl);
-      if (miscDomain === domain) {
-        miscSameDomainTabIds.push(miscTab.id);
-      }
-    }
   }
 
   try {
-    let hasGroupingChanges = false;
-    let leftSourceGroup = false;
-
-    if (Number.isFinite(targetGroupId) && targetGroupId >= 0) {
-      const groupedId = await chrome.tabs.group({ tabIds: [tab.id], groupId: targetGroupId });
-      const resolvedGroupId = Number.isFinite(groupedId) ? groupedId : targetGroupId;
-      await moveTabToGroupEnd(tab.windowId, resolvedGroupId, tab.id);
-      hasGroupingChanges = true;
-      if (sourceGroupId !== null && resolvedGroupId !== sourceGroupId) {
-        leftSourceGroup = true;
+    let tabsInWindow = await chrome.tabs.query({ windowId: tab.windowId });
+    const normalized = await normalizeSingletonDomainGroupsInWindow(tab.windowId, tabsInWindow);
+    if (normalized) {
+      tabsInWindow = await chrome.tabs.query({ windowId: tab.windowId });
+      const refreshedTab = await chrome.tabs.get(tab.id);
+      if (refreshedTab) {
+        tab = refreshedTab;
       }
-    } else if (miscSameDomainTabIds.length > 0) {
-      const groupedId = await chrome.tabs.group({ tabIds: [...new Set([...miscSameDomainTabIds, tab.id])] });
-      if (Number.isFinite(groupedId) && groupedId >= 0) {
-        await moveTabToGroupEnd(tab.windowId, groupedId, tab.id);
-      }
-      hasGroupingChanges = true;
-      if (sourceGroupId !== null) {
-        leftSourceGroup = true;
-      }
-    } else if (sourceGroupId !== null && !sourceIsMisc && !sourceIsDedicatedDomain) {
-      await chrome.tabs.ungroup(tab.id);
-      hasGroupingChanges = true;
-      leftSourceGroup = true;
     }
 
-    if (leftSourceGroup && sourceGroupId !== null && !sourceIsMisc) {
-      const sourceGroupTabs = await chrome.tabs.query({
-        windowId: tab.windowId,
-        groupId: sourceGroupId,
-      });
-      if (Array.isArray(sourceGroupTabs) && sourceGroupTabs.length === 1 && Number.isFinite(sourceGroupTabs[0]?.id)) {
-        await moveSingleTabToMiscDomainGroup(tab.windowId, sourceGroupTabs[0].id, sourceGroupId);
-        hasGroupingChanges = true;
-      }
-    } else if (sourceIsSingleton && sourceIsMisc && miscSameDomainTabIds.length > 0) {
-      await rebalanceSingletonDomainGroupsInWindow(tab.windowId);
-      hasGroupingChanges = true;
+    const destination = await resolveGroupingDestination(tab.windowId, tab, tabsInWindow);
+    if (!destination || !Number.isFinite(destination.groupId) || destination.groupId < 0) {
+      return;
     }
 
-    if (hasGroupingChanges) {
-      await persistTabListSyncEntity('auto-domain-grouping');
+    if (Number.isFinite(tab.groupId) && tab.groupId === destination.groupId) {
+      if (normalized) {
+        await persistTabListSyncEntity('auto-domain-grouping');
+      }
+      return;
     }
+
+    const groupedId = await chrome.tabs.group({ tabIds: [tab.id], groupId: destination.groupId });
+    const resolvedGroupId = Number.isFinite(groupedId) ? groupedId : destination.groupId;
+    await moveTabToGroupEnd(tab.windowId, resolvedGroupId, tab.id);
+    await persistTabListSyncEntity('auto-domain-grouping');
   } catch (error) {
     console.debug('Failed to auto group tab by domain:', error);
   }
