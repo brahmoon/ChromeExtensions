@@ -54,6 +54,9 @@ const detachedTabSourceWindowState = new Map();
 let tabListSyncSequence = 0;
 const autoGroupingInFlightTabIds = new Set();
 const autoGroupingPendingTabIds = new Set();
+const autoGroupingWindowDebounceTimers = new Map();
+const autoGroupingQueuedTabsByWindow = new Map();
+const AUTO_GROUPING_WINDOW_DEBOUNCE_MS = 300;
 
 async function warmTabGroupIdCache() {
   try {
@@ -135,9 +138,13 @@ async function warmWindowAutoGroupingStateCache() {
   }
 }
 
-loadAutoDomainGroupingPreference().catch(() => {});
-warmWindowAutoGroupingStateCache().catch(() => {});
-warmTabGroupIdCache().catch(() => {});
+async function initializeAutoGroupingRuntimeState() {
+  await loadAutoDomainGroupingPreference();
+  await warmWindowAutoGroupingStateCache();
+  await warmTabGroupIdCache();
+}
+
+initializeAutoGroupingRuntimeState().catch(() => {});
 
 function getPanelSyncEntityKey(entityId) {
   return `${PANEL_SYNC_ENTITY_PREFIX}${entityId}`;
@@ -1075,7 +1082,7 @@ chrome.tabs.onCreated.addListener((tab) => {
     setWindowAutoGroupingState(tab.windowId, autoDomainGroupingEnabled);
   }
 
-  autoGroupTabByDomain(tab, { requireActiveContext: false }).catch(() => {});
+  queueAutoGroupTabByDomain(tab, { requireActiveContext: false });
   persistTabListSyncEntity('created').catch(() => {});
 });
 
@@ -1106,7 +1113,7 @@ chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
         try {
           const attachedTab = await chrome.tabs.get(tabId);
           if (attachedTab) {
-            await autoGroupTabByDomain(attachedTab, { requireActiveContext: false });
+            queueAutoGroupTabByDomain(attachedTab, { requireActiveContext: false });
           }
         } catch (error) {
           // ignore lookup failure for moved/closed tabs
@@ -1149,7 +1156,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     return;
   }
 
-  autoGroupTabByDomain(tab, { requireActiveContext: false }).catch(() => {});
+  queueAutoGroupTabByDomain(tab, { requireActiveContext: false });
 });
 
 function extractDomainForGrouping(url) {
@@ -1540,7 +1547,7 @@ async function disbandSingletonGroupAfterRemoval(windowId, groupId) {
   try {
     const refreshed = await chrome.tabs.get(loneTab.id);
     if (refreshed) {
-      await autoGroupTabByDomain(refreshed, { requireActiveContext: false });
+      queueAutoGroupTabByDomain(refreshed, { requireActiveContext: false });
     }
   } catch (error) {
     // ignore follow-up regroup failures for closed or transient tabs
@@ -1578,7 +1585,7 @@ async function runCommonGroupingForSingletonTabsInWindow(windowId, { excludeTabI
       continue;
     }
 
-    await autoGroupTabByDomain(loneTab, { requireActiveContext: false });
+    queueAutoGroupTabByDomain(loneTab, { requireActiveContext: false });
   }
 }
 
@@ -1606,11 +1613,6 @@ async function autoGroupTabByDomainCore(tab, { requireActiveContext } = {}) {
 
   if (requireActiveContext) {
     if (!tab.active) {
-      return;
-    }
-
-    const activeWindowId = await resolveLastFocusedWindowId();
-    if (!Number.isFinite(activeWindowId) || activeWindowId !== tab.windowId) {
       return;
     }
   }
@@ -1686,7 +1688,7 @@ async function autoGroupTabByDomainCore(tab, { requireActiveContext } = {}) {
         chrome.tabs.get(tab.id)
           .then((freshTab) => {
             if (freshTab) {
-              autoGroupTabByDomain(freshTab, { requireActiveContext: false }).catch(() => {});
+              queueAutoGroupTabByDomain(freshTab, { requireActiveContext: false });
             }
           })
           .catch(() => {});
@@ -1733,6 +1735,43 @@ async function autoGroupTabByDomain(tab, options = {}) {
     autoGroupingPendingTabIds.delete(tabId);
     autoGroupingInFlightTabIds.delete(tabId);
   }
+}
+
+function queueAutoGroupTabByDomain(tab, options = {}) {
+  if (!tab || !Number.isFinite(tab.id) || !Number.isFinite(tab.windowId)) {
+    return;
+  }
+
+  const windowId = tab.windowId;
+  let queuedTabs = autoGroupingQueuedTabsByWindow.get(windowId);
+  if (!queuedTabs) {
+    queuedTabs = new Map();
+    autoGroupingQueuedTabsByWindow.set(windowId, queuedTabs);
+  }
+  queuedTabs.set(tab.id, { tab, options });
+
+  const existingTimer = autoGroupingWindowDebounceTimers.get(windowId);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+  }
+
+  const timer = setTimeout(() => {
+    autoGroupingWindowDebounceTimers.delete(windowId);
+    const pending = autoGroupingQueuedTabsByWindow.get(windowId);
+    autoGroupingQueuedTabsByWindow.delete(windowId);
+
+    if (!pending || pending.size === 0) {
+      return;
+    }
+
+    (async () => {
+      for (const queued of pending.values()) {
+        await autoGroupTabByDomain(queued.tab, queued.options).catch(() => {});
+      }
+    })().catch(() => {});
+  }, AUTO_GROUPING_WINDOW_DEBOUNCE_MS);
+
+  autoGroupingWindowDebounceTimers.set(windowId, timer);
 }
 
 
@@ -1934,21 +1973,12 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     }
 
     if (!wasEnabled && autoDomainGroupingEnabled) {
-      resolveLastFocusedWindowId()
-        .then((focusedWindowId) => {
-          if (!Number.isFinite(focusedWindowId)) {
-            return null;
+      groupTabsByDomain({ scope: GROUP_SCOPE_ALL })
+        .then((hasGroupingChanges) => {
+          if (hasGroupingChanges) {
+            return persistTabListSyncEntity('auto-domain-grouping-enabled');
           }
-
-          return groupTabsByDomain({
-            scope: GROUP_SCOPE_CURRENT,
-            windowId: focusedWindowId,
-          }).then((hasGroupingChanges) => {
-            if (hasGroupingChanges) {
-              return persistTabListSyncEntity('auto-domain-grouping-enabled');
-            }
-            return null;
-          });
+          return null;
         })
         .catch((error) => {
           console.debug('Failed to run initial auto domain grouping:', error);
