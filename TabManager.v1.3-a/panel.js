@@ -225,7 +225,7 @@ function updateExpandedViewUI() {
     toggleButton.setAttribute('aria-pressed', expandedViewEnabled ? 'true' : 'false');
     toggleButton.title = expandedViewEnabled
       ? '通常表示に戻す'
-      : '全画面表示に切り替え';
+      : '全てのウィンドウを表示';
   }
 
   if (tabList) {
