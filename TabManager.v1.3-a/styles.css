@@ -417,20 +417,20 @@ header.is-compact {
   background-color: var(--tm-hover-bg);
 }
 
-.group-header::after {
+.group-header::before {
   content: '';
   width: 0;
   height: 0;
   display: inline-block;
+  flex-shrink: 0;
   border-left: 5px solid transparent;
   border-right: 5px solid transparent;
   border-top: 6px solid var(--tm-text-muted);
-  margin-left: auto;
   transform-origin: center;
   transition: transform 0.2s ease;
 }
 
-.group-header[aria-expanded='false']::after {
+.group-header[aria-expanded='false']::before {
   transform: rotate(-90deg);
 }
 
