@@ -3312,6 +3312,7 @@ async function renderWorkspaceView() {
 
   grid.replaceChildren(fragment);
   setupWorkspaceDragAndDrop(grid);
+  setupWorkspaceGroupDropZones(grid);
   scheduleWorkspaceTextClampMeasurement();
 }
 
@@ -4082,6 +4083,8 @@ async function refreshTabs() {
 
     if (expandedView) {
       expandedView.replaceChildren(expandedFragment);
+      await setupTabDragAndDrop(expandedView, { expandedMode: true });
+      await setupExpandedGroupWindowMove(expandedView);
     }
 
     tabList.replaceChildren();
