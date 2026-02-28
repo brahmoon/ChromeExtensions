@@ -54,9 +54,6 @@ const detachedTabSourceWindowState = new Map();
 let tabListSyncSequence = 0;
 const autoGroupingInFlightTabIds = new Set();
 const autoGroupingPendingTabIds = new Set();
-const autoGroupingWindowDebounceTimers = new Map();
-const autoGroupingQueuedTabsByWindow = new Map();
-const AUTO_GROUPING_WINDOW_DEBOUNCE_MS = 300;
 
 async function warmTabGroupIdCache() {
   try {
@@ -139,12 +136,14 @@ async function warmWindowAutoGroupingStateCache() {
 }
 
 async function initializeAutoGroupingRuntimeState() {
-  await loadAutoDomainGroupingPreference();
-  await warmWindowAutoGroupingStateCache();
-  await warmTabGroupIdCache();
+  await loadAutoDomainGroupingPreference();   // 1. 必ず最初：正しい設定値を確定する
+  await warmWindowAutoGroupingStateCache();    // 2. 確定した値でウィンドウ状態を初期化する
+  await warmTabGroupIdCache();                // 3. タブグループキャッシュを初期化する
 }
 
-initializeAutoGroupingRuntimeState().catch(() => {});
+initializeAutoGroupingRuntimeState().catch((error) => {
+  console.error('Failed to initialize auto grouping runtime state:', error);
+});
 
 function getPanelSyncEntityKey(entityId) {
   return `${PANEL_SYNC_ENTITY_PREFIX}${entityId}`;
@@ -1082,7 +1081,7 @@ chrome.tabs.onCreated.addListener((tab) => {
     setWindowAutoGroupingState(tab.windowId, autoDomainGroupingEnabled);
   }
 
-  queueAutoGroupTabByDomain(tab, { requireActiveContext: false });
+  autoGroupTabByDomain(tab, { requireActiveContext: false }).catch(() => {});
   persistTabListSyncEntity('created').catch(() => {});
 });
 
@@ -1113,7 +1112,7 @@ chrome.tabs.onAttached.addListener((tabId, attachInfo) => {
         try {
           const attachedTab = await chrome.tabs.get(tabId);
           if (attachedTab) {
-            queueAutoGroupTabByDomain(attachedTab, { requireActiveContext: false });
+            await autoGroupTabByDomain(attachedTab, { requireActiveContext: false });
           }
         } catch (error) {
           // ignore lookup failure for moved/closed tabs
@@ -1156,7 +1155,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     return;
   }
 
-  queueAutoGroupTabByDomain(tab, { requireActiveContext: false });
+  autoGroupTabByDomain(tab, { requireActiveContext: false }).catch(() => {});
 });
 
 function extractDomainForGrouping(url) {
@@ -1547,7 +1546,7 @@ async function disbandSingletonGroupAfterRemoval(windowId, groupId) {
   try {
     const refreshed = await chrome.tabs.get(loneTab.id);
     if (refreshed) {
-      queueAutoGroupTabByDomain(refreshed, { requireActiveContext: false });
+      await autoGroupTabByDomain(refreshed, { requireActiveContext: false });
     }
   } catch (error) {
     // ignore follow-up regroup failures for closed or transient tabs
@@ -1585,7 +1584,7 @@ async function runCommonGroupingForSingletonTabsInWindow(windowId, { excludeTabI
       continue;
     }
 
-    queueAutoGroupTabByDomain(loneTab, { requireActiveContext: false });
+    await autoGroupTabByDomain(loneTab, { requireActiveContext: false });
   }
 }
 
@@ -1613,6 +1612,11 @@ async function autoGroupTabByDomainCore(tab, { requireActiveContext } = {}) {
 
   if (requireActiveContext) {
     if (!tab.active) {
+      return;
+    }
+
+    const activeWindowId = await resolveLastFocusedWindowId();
+    if (!Number.isFinite(activeWindowId) || activeWindowId !== tab.windowId) {
       return;
     }
   }
@@ -1683,22 +1687,19 @@ async function autoGroupTabByDomainCore(tab, { requireActiveContext } = {}) {
     }
   } catch (error) {
     if (isTransientTabEditError(error) && Number.isFinite(tab?.id)) {
+      // pending フラグのみ立てる。
+      // 再試行は呼び出し元 autoGroupTabByDomain の while ループが一元的に担う。
+      // setTimeout による autoGroupTabByDomain の直接再呼び出しは競合を招くため削除。
       autoGroupingPendingTabIds.add(tab.id);
-      setTimeout(() => {
-        chrome.tabs.get(tab.id)
-          .then((freshTab) => {
-            if (freshTab) {
-              queueAutoGroupTabByDomain(freshTab, { requireActiveContext: false });
-            }
-          })
-          .catch(() => {});
-      }, 180);
       return;
     }
 
-    console.debug('Failed to auto group tab by domain:', error);
+    // transient 以外のエラーは握り潰さず throw して
+    // 呼び出し元の finally でロック解除を保証する。
+    throw error;
   }
 }
+
 async function autoGroupTabByDomain(tab, options = {}) {
   if (!tab || !Number.isFinite(tab.id)) {
     return;
@@ -1716,62 +1717,44 @@ async function autoGroupTabByDomain(tab, options = {}) {
   try {
     while (true) {
       autoGroupingPendingTabIds.delete(tabId);
-      await autoGroupTabByDomainCore(currentTab, options);
+
+      try {
+        await autoGroupTabByDomainCore(currentTab, options);
+      } catch (error) {
+        if (isTransientTabEditError(error)) {
+          // transient エラーは pending フラグを立てて再試行へ。
+          // core の catch でも add されるが二重 add は Set なので無害。
+          autoGroupingPendingTabIds.add(tabId);
+        } else {
+          // 致命的エラーは外へ伝播させて finally でロック解除を保証する。
+          throw error;
+        }
+      }
 
       if (!autoGroupingPendingTabIds.has(tabId)) {
         break;
       }
+
+      // ドラッグ操作等の完了を待ってから再試行する。
+      // 遅延なしで即再試行するとドラッグ中に再びエラーになり pending が永続する。
+      await new Promise((resolve) => setTimeout(resolve, 200));
 
       try {
         const refreshed = await chrome.tabs.get(tabId);
         if (refreshed) {
           currentTab = refreshed;
         }
-      } catch (error) {
+      } catch {
+        // タブが閉じられた場合は正常な終了条件として明示的にループを抜ける。
         break;
       }
     }
   } finally {
+    // 何が起きても（例外・競合・想定外エラー・API変更のいずれの経路でも）
+    // 必ずロックを解除する。
     autoGroupingPendingTabIds.delete(tabId);
     autoGroupingInFlightTabIds.delete(tabId);
   }
-}
-
-function queueAutoGroupTabByDomain(tab, options = {}) {
-  if (!tab || !Number.isFinite(tab.id) || !Number.isFinite(tab.windowId)) {
-    return;
-  }
-
-  const windowId = tab.windowId;
-  let queuedTabs = autoGroupingQueuedTabsByWindow.get(windowId);
-  if (!queuedTabs) {
-    queuedTabs = new Map();
-    autoGroupingQueuedTabsByWindow.set(windowId, queuedTabs);
-  }
-  queuedTabs.set(tab.id, { tab, options });
-
-  const existingTimer = autoGroupingWindowDebounceTimers.get(windowId);
-  if (existingTimer) {
-    clearTimeout(existingTimer);
-  }
-
-  const timer = setTimeout(() => {
-    autoGroupingWindowDebounceTimers.delete(windowId);
-    const pending = autoGroupingQueuedTabsByWindow.get(windowId);
-    autoGroupingQueuedTabsByWindow.delete(windowId);
-
-    if (!pending || pending.size === 0) {
-      return;
-    }
-
-    (async () => {
-      for (const queued of pending.values()) {
-        await autoGroupTabByDomain(queued.tab, queued.options).catch(() => {});
-      }
-    })().catch(() => {});
-  }, AUTO_GROUPING_WINDOW_DEBOUNCE_MS);
-
-  autoGroupingWindowDebounceTimers.set(windowId, timer);
 }
 
 
@@ -1973,12 +1956,21 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     }
 
     if (!wasEnabled && autoDomainGroupingEnabled) {
-      groupTabsByDomain({ scope: GROUP_SCOPE_ALL })
-        .then((hasGroupingChanges) => {
-          if (hasGroupingChanges) {
-            return persistTabListSyncEntity('auto-domain-grouping-enabled');
+      resolveLastFocusedWindowId()
+        .then((focusedWindowId) => {
+          if (!Number.isFinite(focusedWindowId)) {
+            return null;
           }
-          return null;
+
+          return groupTabsByDomain({
+            scope: GROUP_SCOPE_CURRENT,
+            windowId: focusedWindowId,
+          }).then((hasGroupingChanges) => {
+            if (hasGroupingChanges) {
+              return persistTabListSyncEntity('auto-domain-grouping-enabled');
+            }
+            return null;
+          });
         })
         .catch((error) => {
           console.debug('Failed to run initial auto domain grouping:', error);
