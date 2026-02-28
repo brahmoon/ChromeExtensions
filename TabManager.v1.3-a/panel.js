@@ -20,6 +20,8 @@ const DOMAIN_GROUP_CONTAINER_ID = 'domain-group-container';
 const HISTORY_TOGGLE_BUTTON_ID = 'history-toggle-btn';
 const SEARCH_INPUT_ID = 'tab-search-input';
 const CLOSE_BUTTON_ID = 'close-btn';
+const EXPANDED_VIEW_TOGGLE_BUTTON_ID = 'expanded-view-toggle-btn';
+const EXPANDED_VIEW_CONTAINER_ID = 'expanded-view';
 const DOMAIN_GROUP_SCOPE_CURRENT = 'current';
 const DOMAIN_GROUP_SCOPE_ALL = 'all';
 const TAB_VIEW_ID = 'tab-view';
@@ -85,6 +87,7 @@ let activationHistory = loadActivationHistoryFromStorage();
 let lastKnownActiveTabId = null;
 let lastKnownOpenTabIds = new Set();
 let panelWindowId = null;
+let expandedViewEnabled = false;
 let latestAppliedTabListSyncSequence = 0;
 let latestAppliedTabListSyncUpdatedAt = 0;
 const tabMetadataMap = new WeakMap();
@@ -126,6 +129,14 @@ function getSearchInput() {
 
 function getCloseButton() {
   return document.getElementById(CLOSE_BUTTON_ID);
+}
+
+function getExpandedViewElement() {
+  return document.getElementById(EXPANDED_VIEW_CONTAINER_ID);
+}
+
+function getExpandedViewToggleButton() {
+  return document.getElementById(EXPANDED_VIEW_TOGGLE_BUTTON_ID);
 }
 
 async function getPanelWindowId() {
@@ -202,6 +213,43 @@ function toggleAudioFilter(forceState) {
 
   audioFilterEnabled = nextState;
   updateAudioFilterButtonUI();
+  refreshTabs();
+}
+
+function updateExpandedViewUI() {
+  const toggleButton = getExpandedViewToggleButton();
+  const tabList = getTabListElement();
+  const expandedView = getExpandedViewElement();
+
+  if (toggleButton) {
+    toggleButton.setAttribute('aria-pressed', expandedViewEnabled ? 'true' : 'false');
+    toggleButton.title = expandedViewEnabled
+      ? '通常表示に戻す'
+      : '全てのウィンドウを表示';
+  }
+
+  if (tabList) {
+    tabList.hidden = expandedViewEnabled;
+  }
+
+  if (expandedView) {
+    expandedView.hidden = !expandedViewEnabled;
+  }
+
+  postToParentMessage('TabManagerExpandedViewChanged', {
+    expanded: expandedViewEnabled,
+  });
+}
+
+function setExpandedViewEnabled(nextEnabled) {
+  const normalized = Boolean(nextEnabled);
+  if (expandedViewEnabled === normalized) {
+    updateExpandedViewUI();
+    return;
+  }
+
+  expandedViewEnabled = normalized;
+  updateExpandedViewUI();
   refreshTabs();
 }
 
@@ -2937,6 +2985,21 @@ function setupCloseButton() {
   });
 }
 
+
+function setupExpandedViewControls() {
+  const toggleButton = getExpandedViewToggleButton();
+  updateExpandedViewUI();
+  if (!toggleButton) {
+    return;
+  }
+
+  toggleButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setExpandedViewEnabled(!expandedViewEnabled);
+  });
+}
+
 function setupHistoryControls() {
   const toggleButton = getHistoryToggleButton();
   if (toggleButton) {
@@ -3029,13 +3092,206 @@ async function initializePanelSyncSnapshotState() {
   }
 }
 
+
+function buildTabStructureFromTabs(tabs) {
+  const groupMap = new Map();
+  const structure = [];
+
+  for (const tab of tabs) {
+    if (Number.isFinite(tab?.groupId) && tab.groupId >= 0) {
+      let groupEntry = groupMap.get(tab.groupId);
+      if (!groupEntry) {
+        groupEntry = { tabs: [], info: null };
+        groupMap.set(tab.groupId, groupEntry);
+        structure.push({ type: 'group', groupId: tab.groupId });
+      }
+      groupEntry.tabs.push(tab);
+    } else {
+      structure.push({ type: 'tab', tab });
+    }
+  }
+
+  return { groupMap, structure };
+}
+
+async function resolveTabGroupInfo(groupMap, requestId) {
+  if (groupMap.size === 0 || !chrome?.tabGroups?.get) {
+    return;
+  }
+
+  await Promise.all(
+    Array.from(groupMap.entries()).map(async ([groupId, entry]) => {
+      try {
+        entry.info = await chrome.tabGroups.get(groupId);
+      } catch (error) {
+        console.debug('Failed to retrieve tab group info:', error);
+        entry.info = null;
+      }
+    })
+  );
+
+  if (requestId !== refreshTabsRequestId) {
+    throw new Error('refresh-cancelled');
+  }
+}
+
+function buildListFragmentFromStructure(structure, groupMap, appendTabId) {
+  const fragment = document.createDocumentFragment();
+
+  for (const item of structure) {
+    if (item.type === 'tab') {
+      appendTabId(item.tab);
+      fragment.appendChild(createTabListItem(item.tab));
+      continue;
+    }
+
+    if (item.type !== 'group') {
+      continue;
+    }
+
+    const entry = groupMap.get(item.groupId);
+    if (!entry || entry.tabs.length === 0) {
+      continue;
+    }
+
+    entry.tabs.forEach((tab) => appendTabId(tab));
+    const groupElement = createGroupAccordion(item.groupId, entry.info, entry.tabs);
+    if (groupElement) {
+      fragment.appendChild(groupElement);
+    } else {
+      entry.tabs.forEach((tab) => {
+        fragment.appendChild(createTabListItem(tab));
+      });
+    }
+  }
+
+  return fragment;
+}
+
+function sortWindowsForExpandedView(windows, currentWindowId) {
+  if (!Array.isArray(windows)) {
+    return [];
+  }
+
+  const copied = windows.slice();
+  copied.sort((a, b) => {
+    const aCurrent = a?.id === currentWindowId ? 1 : 0;
+    const bCurrent = b?.id === currentWindowId ? 1 : 0;
+    if (aCurrent !== bCurrent) {
+      return bCurrent - aCurrent;
+    }
+
+    const aFocused = a?.focused ? 1 : 0;
+    const bFocused = b?.focused ? 1 : 0;
+    if (aFocused !== bFocused) {
+      return bFocused - aFocused;
+    }
+
+    const idA = Number.isFinite(a?.id) ? a.id : 0;
+    const idB = Number.isFinite(b?.id) ? b.id : 0;
+    return idA - idB;
+  });
+
+  return copied;
+}
+
 async function refreshTabs() {
   hideContextMenu();
   const requestId = ++refreshTabsRequestId;
 
+  const tabList = getTabListElement();
+  const expandedView = getExpandedViewElement();
+  if (!tabList) {
+    return;
+  }
+
+  let windowId = null;
+  try {
+    windowId = await getPanelWindowId();
+  } catch (error) {
+    console.debug('Failed to resolve panel window id:', error);
+  }
+
+  if (expandedViewEnabled) {
+    let windows = [];
+    try {
+      windows = await chrome.windows.getAll({ populate: true });
+    } catch (error) {
+      console.error('Failed to query windows:', error);
+      return;
+    }
+
+    if (requestId !== refreshTabsRequestId) {
+      return;
+    }
+
+    const orderedWindows = sortWindowsForExpandedView(windows, windowId);
+    const allOpenTabIds = new Set();
+    const tabIdsForQueue = [];
+    const appendTabId = (tab) => {
+      if (Number.isFinite(tab?.id)) {
+        allOpenTabIds.add(Math.trunc(tab.id));
+        tabIdsForQueue.push(tab.id);
+      }
+    };
+
+    const expandedFragment = document.createDocumentFragment();
+
+    for (const win of orderedWindows) {
+      const windowTabs = Array.isArray(win?.tabs) ? win.tabs : [];
+      const searchableTabs = windowTabs.filter((tab) => matchesSearch(tab));
+      const { groupMap, structure } = buildTabStructureFromTabs(searchableTabs);
+
+      try {
+        await resolveTabGroupInfo(groupMap, requestId);
+      } catch (error) {
+        if (error && error.message === 'refresh-cancelled') {
+          return;
+        }
+      }
+
+      const column = document.createElement('section');
+      column.className = 'window-column';
+      if (Number.isFinite(win?.id)) {
+        column.dataset.windowId = String(win.id);
+      }
+
+      const header = document.createElement('div');
+      header.className = 'window-column__header';
+      if (win?.id === windowId) {
+        header.textContent = '現在のウィンドウ';
+      } else {
+        const label = Number.isFinite(win?.id) ? `ウィンドウ ${win.id}` : '別ウィンドウ';
+        header.textContent = label;
+      }
+      column.appendChild(header);
+
+      const list = document.createElement('ul');
+      list.className = 'window-column__list';
+      const listFragment = buildListFragmentFromStructure(structure, groupMap, appendTabId);
+      list.appendChild(listFragment);
+      column.appendChild(list);
+      expandedFragment.appendChild(column);
+    }
+
+    if (requestId !== refreshTabsRequestId) {
+      return;
+    }
+
+    lastKnownOpenTabIds = allOpenTabIds;
+    pruneActivationHistory(allOpenTabIds);
+
+    if (expandedView) {
+      expandedView.replaceChildren(expandedFragment);
+    }
+
+    tabList.replaceChildren();
+    syncPreviewQueue(tabIdsForQueue);
+    return;
+  }
+
   let tabs;
   try {
-    const windowId = await getPanelWindowId();
     const queryInfo = Number.isFinite(windowId) ? { windowId } : {};
     tabs = await chrome.tabs.query(queryInfo);
   } catch (error) {
@@ -3044,11 +3300,6 @@ async function refreshTabs() {
   }
 
   if (requestId !== refreshTabsRequestId) {
-    return;
-  }
-
-  const list = document.getElementById('tab-list');
-  if (!list) {
     return;
   }
 
@@ -3083,11 +3334,13 @@ async function refreshTabs() {
     }
   };
 
-  if (historyViewEnabled) {
-    const orderedTabs = sortTabsByHistory(searchFilteredTabs);
+  if (historyViewEnabled || audioFilterEnabled) {
+    const tabsForView = historyViewEnabled
+      ? sortTabsByHistory(searchFilteredTabs)
+      : searchFilteredTabs;
     const fragment = document.createDocumentFragment();
 
-    for (const tab of orderedTabs) {
+    for (const tab of tabsForView) {
       enqueueTabId(tab);
       fragment.appendChild(createTabListItem(tab));
     }
@@ -3096,7 +3349,10 @@ async function refreshTabs() {
       return;
     }
 
-    list.replaceChildren(fragment);
+    tabList.replaceChildren(fragment);
+    if (expandedView) {
+      expandedView.replaceChildren();
+    }
     syncPreviewQueue(tabIdsForQueue);
 
     if (scrollPersistenceSuspended || !hasRestoredScrollPosition) {
@@ -3105,94 +3361,27 @@ async function refreshTabs() {
     return;
   }
 
-  if (audioFilterEnabled) {
-    const fragment = document.createDocumentFragment();
-
-    for (const tab of searchFilteredTabs) {
-      enqueueTabId(tab);
-      fragment.appendChild(createTabListItem(tab));
-    }
-
-    if (requestId !== refreshTabsRequestId) {
-      return;
-    }
-
-    list.replaceChildren(fragment);
-    syncPreviewQueue(tabIdsForQueue);
-
-    if (scrollPersistenceSuspended || !hasRestoredScrollPosition) {
-      restoreScrollPositionFromStorage();
-    }
-    return;
-  }
-
-  const groupMap = new Map();
-  const structure = [];
-
-  for (const tab of searchFilteredTabs) {
-    enqueueTabId(tab);
-
-    if (Number.isFinite(tab?.groupId) && tab.groupId >= 0) {
-      let groupEntry = groupMap.get(tab.groupId);
-      if (!groupEntry) {
-        groupEntry = { tabs: [], info: null };
-        groupMap.set(tab.groupId, groupEntry);
-        structure.push({ type: 'group', groupId: tab.groupId });
-      }
-      groupEntry.tabs.push(tab);
-    } else {
-      structure.push({ type: 'tab', tab });
-    }
-  }
-
+  const { groupMap, structure } = buildTabStructureFromTabs(searchFilteredTabs);
   pruneStoredGroupExpansionState(Array.from(groupMap.keys()));
 
-  if (groupMap.size > 0 && chrome?.tabGroups?.get) {
-    await Promise.all(
-      Array.from(groupMap.entries()).map(async ([groupId, entry]) => {
-        try {
-          entry.info = await chrome.tabGroups.get(groupId);
-        } catch (error) {
-          console.debug('Failed to retrieve tab group info:', error);
-          entry.info = null;
-        }
-      })
-    );
-
-    if (requestId !== refreshTabsRequestId) {
+  try {
+    await resolveTabGroupInfo(groupMap, requestId);
+  } catch (error) {
+    if (error && error.message === 'refresh-cancelled') {
       return;
     }
   }
 
-  const fragment = document.createDocumentFragment();
-
-  for (const item of structure) {
-    if (item.type === 'tab') {
-      fragment.appendChild(createTabListItem(item.tab));
-      continue;
-    }
-
-    if (item.type === 'group') {
-      const entry = groupMap.get(item.groupId);
-      if (!entry || entry.tabs.length === 0) {
-        continue;
-      }
-      const groupElement = createGroupAccordion(item.groupId, entry.info, entry.tabs);
-      if (groupElement) {
-        fragment.appendChild(groupElement);
-      } else {
-        entry.tabs.forEach((tab) => {
-          fragment.appendChild(createTabListItem(tab));
-        });
-      }
-    }
-  }
+  const fragment = buildListFragmentFromStructure(structure, groupMap, enqueueTabId);
 
   if (requestId !== refreshTabsRequestId) {
     return;
   }
 
-  list.replaceChildren(fragment);
+  tabList.replaceChildren(fragment);
+  if (expandedView) {
+    expandedView.replaceChildren();
+  }
 
   syncPreviewQueue(tabIdsForQueue);
 
@@ -3244,6 +3433,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupOptionsControls();
   setupSearchControls();
   setupCloseButton();
+  setupExpandedViewControls();
   await initializeHistoryState();
   setupHistoryControls();
   await initializeGroupExpansionState();
