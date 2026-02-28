@@ -3319,6 +3319,47 @@ function scheduleWorkspaceTextClampMeasurement() {
   });
 }
 
+function measureWorkspaceTextOverflow(textEl, clampLines = 4) {
+  if (!(textEl instanceof HTMLElement)) {
+    return false;
+  }
+
+  const width = textEl.clientWidth;
+  if (!Number.isFinite(width) || width <= 0) {
+    return false;
+  }
+
+  const clone = textEl.cloneNode(true);
+  if (!(clone instanceof HTMLElement)) {
+    return false;
+  }
+
+  clone.classList.remove('is-expanded');
+  clone.style.position = 'fixed';
+  clone.style.left = '-99999px';
+  clone.style.top = '0';
+  clone.style.visibility = 'hidden';
+  clone.style.pointerEvents = 'none';
+  clone.style.width = `${width}px`;
+  clone.style.maxWidth = `${width}px`;
+  clone.style.minWidth = `${width}px`;
+  clone.style.display = 'block';
+  clone.style.overflow = 'visible';
+  clone.style.webkitLineClamp = 'unset';
+
+  document.body.appendChild(clone);
+
+  const style = window.getComputedStyle(clone);
+  const lineHeight = Number.parseFloat(style.lineHeight);
+  const safeLineHeight = Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : 20;
+  const fullHeight = clone.scrollHeight;
+  const clampHeight = safeLineHeight * clampLines;
+
+  clone.remove();
+
+  return fullHeight - clampHeight > 1;
+}
+
 function updateWorkspaceTextClampState() {
   const grid = getWorkspaceGrid();
   if (!grid) {
@@ -3333,7 +3374,7 @@ function updateWorkspaceTextClampState() {
     }
 
     const isExpanded = textEl.classList.contains('is-expanded');
-    const isOverflowing = textEl.scrollHeight - textEl.clientHeight > 1;
+    const isOverflowing = measureWorkspaceTextOverflow(textEl, 4);
     if (!isOverflowing && !isExpanded) {
       expandButton.hidden = true;
       return;
