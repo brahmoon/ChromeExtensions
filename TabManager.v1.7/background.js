@@ -91,6 +91,29 @@ async function deleteWorkspaceItem(id) {
   });
 }
 
+async function updateWorkspaceItemGroup(id, groupId) {
+  const db = await openWorkspaceDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(WS_STORE_NAME, 'readwrite');
+    const store = tx.objectStore(WS_STORE_NAME);
+    const req = store.get(id);
+
+    req.onsuccess = () => {
+      const item = req.result;
+      if (!item) {
+        resolve(false);
+        return;
+      }
+      item.groupId = typeof groupId === 'string' && groupId.length > 0 ? groupId : null;
+      store.put(item);
+      resolve(true);
+    };
+
+    req.onerror = () => reject(req.error);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 async function reorderWorkspaceItems(itemIds) {
   const ids = Array.isArray(itemIds)
     ? itemIds.filter((id) => typeof id === 'string' && id.length > 0)
@@ -2300,6 +2323,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(()      => sendResponse({ ok: true }))
       .catch((error) => {
         console.error('WorkspaceDeleteItem failed:', error);
+        sendResponse({ ok: false });
+      });
+    return true;
+  }
+
+  if (message.type === 'WorkspaceUpdateItemGroup') {
+    const id = typeof message.id === 'string' ? message.id : null;
+    if (!id) { sendResponse({ ok: false }); return; }
+    const groupId = typeof message.groupId === 'string' && message.groupId.length > 0
+      ? message.groupId
+      : null;
+
+    updateWorkspaceItemGroup(id, groupId)
+      .then(() => {
+        chrome.storage.local.set({
+          [WORKSPACE_UPDATED_KEY]: { updatedAt: Date.now(), grouped: true },
+        }).catch(() => {});
+        sendResponse({ ok: true });
+      })
+      .catch((error) => {
+        console.error('WorkspaceUpdateItemGroup failed:', error);
         sendResponse({ ok: false });
       });
     return true;
