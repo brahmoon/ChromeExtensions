@@ -968,3 +968,72 @@ body.expanded-view-enabled #workspace-view .workspace-card {
   color: #fff;
   cursor: pointer;
 }
+
+
+.tab-item--dragging {
+  opacity: 0.5;
+}
+
+.group-item--drop-highlight {
+  outline: 2px solid var(--tm-accent);
+  outline-offset: -2px;
+  background: var(--tm-overlay);
+}
+
+.window-column--preview {
+  border-color: var(--tm-accent);
+}
+
+.workspace-group {
+  border: 1px solid var(--tm-border);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 10px;
+  background: var(--tm-soft-overlay);
+}
+
+.workspace-group__header {
+  width: 100%;
+  border: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  color: var(--tm-text-primary);
+  background: var(--tm-header-bg);
+  cursor: pointer;
+}
+
+.workspace-group__header::before {
+  content: '▾';
+  margin-right: 8px;
+}
+
+.workspace-group__header[aria-expanded='false']::before {
+  content: '▸';
+}
+
+.workspace-group__title {
+  flex: 1;
+  text-align: left;
+}
+
+.workspace-group__count {
+  color: var(--tm-text-muted);
+  font-size: 12px;
+}
+
+.workspace-group__body {
+  padding: 8px;
+}
+
+.workspace-group__list {
+  min-height: 26px;
+  display: grid;
+  gap: 8px;
+}
+
+.workspace-group__list--dropping {
+  outline: 1px dashed var(--tm-accent);
+  outline-offset: 4px;
+}

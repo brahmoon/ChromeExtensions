@@ -60,6 +60,9 @@ const WORKSPACE_REORDER_MESSAGE = 'WorkspaceReorderItems';
 const WORKSPACE_IMAGE_PREVIEW_ID = 'workspace-image-preview';
 const WORKSPACE_IMAGE_PREVIEW_IMAGE_ID = 'workspace-image-preview-image';
 const WORKSPACE_IMAGE_PREVIEW_CLOSE_ID = 'workspace-image-preview-close';
+const WORKSPACE_GROUPS_STORAGE_KEY = 'tabManagerWorkspaceGroups';
+const WORKSPACE_GROUP_EXPANSION_STORAGE_KEY = 'tabManagerWorkspaceGroupExpansion';
+const TAB_DRAG_MOVE_GROUP_MESSAGE = 'TabManagerMoveGroupToWindowByDrag';
 
 const TAB_GROUP_COLORS = {
   grey: '#5f6368',
@@ -109,6 +112,8 @@ let contextMenuState = {
 let workspaceViewOpen = false;
 let workspaceTextMeasureRaf = null;
 let workspaceDraggingCard = null;
+let workspaceGroups = loadWorkspaceGroupsFromStorage();
+let workspaceGroupExpansionState = loadWorkspaceGroupExpansionState();
 
 function getTabListElement() {
   return document.getElementById('tab-list');
@@ -675,6 +680,27 @@ function handlePanelContextMenu(event) {
   if (groupContext) {
     event.stopPropagation();
     showGroupContextMenu(event, groupContext);
+    return;
+  }
+
+  if (workspaceViewOpen) {
+    showContextMenu({
+      type: 'workspace',
+      x: event.clientX,
+      y: event.clientY,
+      items: [{
+        label: '新規グループ',
+        onSelect: () => {
+          const name = window.prompt('グループ名を入力してください', '新規グループ');
+          if (name == null) {
+            return;
+          }
+          workspaceGroups = [...workspaceGroups, { id: generateWorkspaceGroupId(), name: name.trim() || '新規グループ' }];
+          persistWorkspaceGroupsToStorage();
+          renderWorkspaceView();
+        },
+      }],
+    });
   }
 }
 
@@ -1131,6 +1157,64 @@ function pruneStoredGroupExpansionState(validGroupIds) {
 
   groupExpansionState = nextState;
   persistGroupExpansionStateToStorage();
+}
+
+function generateWorkspaceGroupId() {
+  return `ws-group-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function loadWorkspaceGroupsFromStorage() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return [];
+  }
+
+  try {
+    const stored = window.localStorage.getItem(WORKSPACE_GROUPS_STORAGE_KEY);
+    if (!stored) {
+      return [];
+    }
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .filter((item) => item && typeof item.id === 'string' && item.id.length > 0)
+      .map((item) => ({
+        id: item.id,
+        name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : '新規グループ',
+      }));
+  } catch (error) {
+    return [];
+  }
+}
+
+function persistWorkspaceGroupsToStorage() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  window.localStorage.setItem(WORKSPACE_GROUPS_STORAGE_KEY, JSON.stringify(workspaceGroups || []));
+}
+
+function loadWorkspaceGroupExpansionState() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return {};
+  }
+  try {
+    const stored = window.localStorage.getItem(WORKSPACE_GROUP_EXPANSION_STORAGE_KEY);
+    return stored ? JSON.parse(stored) || {} : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function persistWorkspaceGroupExpansionState() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  window.localStorage.setItem(
+    WORKSPACE_GROUP_EXPANSION_STORAGE_KEY,
+    JSON.stringify(workspaceGroupExpansionState || {})
+  );
 }
 
 function loadScrollPositionFromStorage() {
@@ -1989,6 +2073,7 @@ function createTabListItem(tab) {
   if (typeof tab.id === 'number') {
     li.dataset.tabId = String(tab.id);
   }
+  li.draggable = true;
 
   if (typeof tab.url === 'string' && tab.url.length > 0) {
     li.dataset.tabUrl = tab.url;
@@ -1997,6 +2082,7 @@ function createTabListItem(tab) {
   } else {
     delete li.dataset.tabUrl;
   }
+  li.dataset.domain = extractDomainForGrouping(tab?.url || tab?.pendingUrl) || '';
 
   const favicon = createFaviconElement(tab);
   favicon.addEventListener('mouseenter', () => {
@@ -2198,12 +2284,16 @@ function createGroupAccordion(groupId, groupInfo, tabs) {
     tabs
   );
   const color = resolveGroupColor(groupInfo?.color);
+  const domains = new Set(tabs.map((tab) => extractDomainForGrouping(tab?.url || tab?.pendingUrl)).filter(Boolean));
+  const dominantDomain = domains.size === 1 ? Array.from(domains)[0] : '';
 
   const item = document.createElement('li');
   item.className = 'group-item';
+  item.draggable = true;
   item.dataset.groupId = String(groupId);
   item.dataset.defaultLabel = defaultLabel || '';
   item.dataset.defaultExpanded = expandedByDefault ? 'true' : 'false';
+  item.dataset.domain = dominantDomain;
   const storedTabs = Array.isArray(tabs)
     ? tabs.map((tab) => {
         if (!tab || typeof tab !== 'object') {
@@ -3025,6 +3115,100 @@ function setupWorkspaceControls() {
   applyWorkspaceViewState();
 }
 
+async function updateWorkspaceItemGroup(itemId, groupId) {
+  return chrome.runtime.sendMessage({
+    type: 'WorkspaceUpdateItemGroup',
+    id: itemId,
+    groupId,
+  });
+}
+
+function createWorkspaceGroupSection(group, items) {
+  const section = document.createElement('section');
+  section.className = 'workspace-group';
+  section.dataset.groupId = group.id;
+
+  const header = document.createElement('button');
+  header.type = 'button';
+  header.className = 'workspace-group__header';
+  const expanded = workspaceGroupExpansionState[group.id] !== false;
+  header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+
+  const title = document.createElement('span');
+  title.className = 'workspace-group__title';
+  title.textContent = group.name;
+
+  const count = document.createElement('span');
+  count.className = 'workspace-group__count';
+  count.textContent = `(${items.length})`;
+
+  header.appendChild(title);
+  header.appendChild(count);
+
+  const body = document.createElement('div');
+  body.className = 'workspace-group__body';
+  body.hidden = !expanded;
+
+  const list = document.createElement('div');
+  list.className = 'workspace-group__list';
+  list.dataset.groupId = group.id;
+
+  for (const item of items) {
+    list.appendChild(createWorkspaceCard(item));
+  }
+
+  body.appendChild(list);
+
+  header.addEventListener('click', () => {
+    const isExpanded = header.getAttribute('aria-expanded') === 'true';
+    const next = !isExpanded;
+    header.setAttribute('aria-expanded', next ? 'true' : 'false');
+    body.hidden = !next;
+    workspaceGroupExpansionState[group.id] = next;
+    persistWorkspaceGroupExpansionState();
+  });
+
+  section.appendChild(header);
+  section.appendChild(body);
+  return section;
+}
+
+function setupWorkspaceGroupDropZones(grid) {
+  const lists = grid.querySelectorAll('.workspace-group__list');
+  lists.forEach((list) => {
+    if (!(list instanceof HTMLElement) || list.dataset.dropBound === 'true') {
+      return;
+    }
+    list.dataset.dropBound = 'true';
+
+    list.addEventListener('dragover', (event) => {
+      if (!workspaceDraggingCard) {
+        return;
+      }
+      event.preventDefault();
+      list.classList.add('workspace-group__list--dropping');
+    });
+
+    list.addEventListener('dragleave', () => {
+      list.classList.remove('workspace-group__list--dropping');
+    });
+
+    list.addEventListener('drop', async (event) => {
+      if (!workspaceDraggingCard) {
+        return;
+      }
+      event.preventDefault();
+      list.classList.remove('workspace-group__list--dropping');
+      const itemId = workspaceDraggingCard.dataset.itemId;
+      if (!itemId) {
+        return;
+      }
+      await updateWorkspaceItemGroup(itemId, list.dataset.groupId || null);
+      await renderWorkspaceView();
+    });
+  });
+}
+
 async function renderWorkspaceView() {
   const grid = getWorkspaceGrid();
   if (!grid) return;
@@ -3038,35 +3222,50 @@ async function renderWorkspaceView() {
     return;
   }
 
-  // 並び順: 手動ソートがあれば優先、なければ保存日時の降順
   items.sort((a, b) => {
     const aOrder = Number.isFinite(a.sortOrder) ? a.sortOrder : null;
     const bOrder = Number.isFinite(b.sortOrder) ? b.sortOrder : null;
-    if (aOrder !== null && bOrder !== null) {
-      return aOrder - bOrder;
-    }
-    if (aOrder !== null) {
-      return -1;
-    }
-    if (bOrder !== null) {
-      return 1;
-    }
+    if (aOrder !== null && bOrder !== null) return aOrder - bOrder;
+    if (aOrder !== null) return -1;
+    if (bOrder !== null) return 1;
     return b.createdAt - a.createdAt;
   });
 
+  const groupedItems = new Map();
+  const ungrouped = [];
+  for (const item of items) {
+    if (typeof item?.groupId === 'string' && item.groupId.length > 0) {
+      if (!groupedItems.has(item.groupId)) {
+        groupedItems.set(item.groupId, []);
+      }
+      groupedItems.get(item.groupId).push(item);
+    } else {
+      ungrouped.push(item);
+    }
+  }
+
   const fragment = document.createDocumentFragment();
-  if (items.length === 0) {
-    const empty = document.createElement('p');
-    empty.className   = 'workspace-empty';
-    empty.textContent = '右クリック → 「ワークスペースに保存」で追加できます';
-    fragment.appendChild(empty);
-  } else {
-    for (const item of items) {
+  for (const group of workspaceGroups) {
+    const itemsInGroup = groupedItems.get(group.id) || [];
+    fragment.appendChild(createWorkspaceGroupSection(group, itemsInGroup));
+  }
+
+  if (ungrouped.length > 0) {
+    for (const item of ungrouped) {
       fragment.appendChild(createWorkspaceCard(item));
     }
   }
+
+  if (items.length === 0 && workspaceGroups.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'workspace-empty';
+    empty.textContent = '右クリック → 「ワークスペースに保存」で追加できます';
+    fragment.appendChild(empty);
+  }
+
   grid.replaceChildren(fragment);
   setupWorkspaceDragAndDrop(grid);
+  setupWorkspaceGroupDropZones(grid);
   scheduleWorkspaceTextClampMeasurement();
 }
 
@@ -3647,6 +3846,181 @@ function sortWindowsForExpandedView(windows, currentWindowId) {
   return copied;
 }
 
+
+async function setupTabDragAndDrop(root, { expandedMode = false } = {}) {
+  if (!root || root.dataset.tabDragDropBound === 'true') {
+    return;
+  }
+  root.dataset.tabDragDropBound = 'true';
+
+  let dragging = null;
+
+  root.addEventListener('dragstart', (event) => {
+    const tabItem = event.target instanceof Element ? event.target.closest('.tab-item') : null;
+    if (!(tabItem instanceof HTMLElement)) {
+      return;
+    }
+    const metadata = tabMetadataMap.get(tabItem);
+    if (!metadata || !metadata.tab || !Number.isFinite(metadata.tab.id)) {
+      return;
+    }
+    dragging = { tab: metadata.tab, source: tabItem };
+    tabItem.classList.add('tab-item--dragging');
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', String(metadata.tab.id));
+    }
+  });
+
+  root.addEventListener('dragover', (event) => {
+    if (!dragging) {
+      return;
+    }
+    const target = event.target instanceof Element ? event.target.closest('.group-tab-list, .window-column__list, #tab-list, .group-item') : null;
+    if (!target) {
+      return;
+    }
+    event.preventDefault();
+  });
+
+  root.addEventListener('drop', async (event) => {
+    if (!dragging) {
+      return;
+    }
+    const targetElement = event.target instanceof Element ? event.target : null;
+    if (!targetElement) {
+      return;
+    }
+
+    const targetGroup = targetElement.closest('.group-item');
+    const targetWindow = targetElement.closest('.window-column');
+    const targetDomain = targetGroup?.dataset?.domain || '';
+    const tabDomain = extractDomainForGrouping(dragging.tab.url || dragging.tab.pendingUrl) || '';
+
+    let autoGroupingEnabled = false;
+    try {
+      const stored = await chrome.storage.local.get({ [AUTO_DOMAIN_GROUP_STORAGE_KEY]: false });
+      autoGroupingEnabled = Boolean(stored[AUTO_DOMAIN_GROUP_STORAGE_KEY]);
+    } catch (error) {}
+
+    if (autoGroupingEnabled && tabDomain && targetDomain && tabDomain !== targetDomain) {
+      const ok = window.confirm('異なるドメイングループへ移動するには自働グループ化を無効化します。続行しますか？');
+      if (!ok) {
+        dragging.source?.classList.remove('tab-item--dragging');
+        dragging = null;
+        return;
+      }
+      await chrome.storage.local.set({ [AUTO_DOMAIN_GROUP_STORAGE_KEY]: false });
+    }
+
+    const windowId = Number.parseInt(targetWindow?.dataset?.windowId || `${dragging.tab.windowId || ''}`, 10);
+    const groupId = Number.parseInt(targetGroup?.dataset?.groupId || '-1', 10);
+
+    try {
+      if (Number.isFinite(windowId) && windowId !== dragging.tab.windowId) {
+        await chrome.tabs.move(dragging.tab.id, { windowId, index: -1 });
+      }
+      if (Number.isFinite(groupId) && groupId >= 0) {
+        await chrome.tabs.group({ tabIds: [dragging.tab.id], groupId });
+      }
+      await refreshTabs();
+    } catch (error) {
+      console.error('Failed to move tab by drag and drop:', error);
+    }
+  });
+
+  root.addEventListener('dragend', () => {
+    dragging?.source?.classList.remove('tab-item--dragging');
+    dragging = null;
+  });
+
+  if (expandedMode) {
+    root.addEventListener('dragover', (event) => {
+      if (!dragging) {
+        return;
+      }
+      const column = event.target instanceof Element ? event.target.closest('.window-column') : null;
+      root.querySelectorAll('.window-column--preview').forEach((item) => item.classList.remove('window-column--preview'));
+      root.querySelectorAll('.group-item--drop-highlight').forEach((item) => item.classList.remove('group-item--drop-highlight'));
+      if (!(column instanceof HTMLElement)) {
+        return;
+      }
+      column.classList.add('window-column--preview');
+      const tabDomain = extractDomainForGrouping(dragging.tab.url || dragging.tab.pendingUrl);
+      if (tabDomain) {
+        const candidate = Array.from(column.querySelectorAll('.group-item')).find((item) => item.dataset.domain === tabDomain);
+        if (candidate) {
+          candidate.classList.add('group-item--drop-highlight');
+        }
+      }
+    });
+  }
+}
+
+async function setupExpandedGroupWindowMove(expandedView) {
+  if (!expandedView || expandedView.dataset.groupDragDropBound === 'true') {
+    return;
+  }
+  expandedView.dataset.groupDragDropBound = 'true';
+
+  let draggingGroup = null;
+  expandedView.addEventListener('dragstart', (event) => {
+    const group = event.target instanceof Element ? event.target.closest('.group-item') : null;
+    if (!(group instanceof HTMLElement)) {
+      return;
+    }
+    const column = group.closest('.window-column');
+    draggingGroup = {
+      groupId: Number.parseInt(group.dataset.groupId || '', 10),
+      sourceWindowId: Number.parseInt(column?.dataset.windowId || '', 10),
+      domain: group.dataset.domain || '',
+    };
+  });
+
+  expandedView.addEventListener('drop', async (event) => {
+    if (!draggingGroup) {
+      return;
+    }
+    const targetColumn = event.target instanceof Element ? event.target.closest('.window-column') : null;
+    if (!(targetColumn instanceof HTMLElement)) {
+      return;
+    }
+
+    const targetWindowId = Number.parseInt(targetColumn.dataset.windowId || '', 10);
+    if (!Number.isFinite(targetWindowId) || targetWindowId === draggingGroup.sourceWindowId) {
+      return;
+    }
+
+    const sameDomainGroup = Array.from(targetColumn.querySelectorAll('.group-item')).find((item) => item.dataset.domain === draggingGroup.domain);
+    let mergeGroupId = null;
+    if (sameDomainGroup) {
+      const merge = window.confirm('同じドメイングループが存在します。統合しますか？');
+      if (merge) {
+        mergeGroupId = Number.parseInt(sameDomainGroup.dataset.groupId || '', 10);
+      } else {
+        const disableAuto = window.confirm('統合しない場合は自働グループ化を無効化します。続行しますか？');
+        if (!disableAuto) {
+          return;
+        }
+        await chrome.storage.local.set({ [AUTO_DOMAIN_GROUP_STORAGE_KEY]: false });
+      }
+    }
+
+    await chrome.runtime.sendMessage({
+      type: TAB_DRAG_MOVE_GROUP_MESSAGE,
+      sourceGroupId: draggingGroup.groupId,
+      targetWindowId,
+      mergeGroupId,
+    });
+
+    await refreshTabs();
+  });
+
+  expandedView.addEventListener('dragend', () => {
+    draggingGroup = null;
+  });
+}
+
 async function refreshTabs() {
   hideContextMenu();
   const requestId = ++refreshTabsRequestId;
@@ -3742,6 +4116,8 @@ async function refreshTabs() {
 
     if (expandedView) {
       expandedView.replaceChildren(expandedFragment);
+      await setupTabDragAndDrop(expandedView, { expandedMode: true });
+      await setupExpandedGroupWindowMove(expandedView);
     }
 
     tabList.replaceChildren();
@@ -3803,6 +4179,7 @@ async function refreshTabs() {
     }
 
     tabList.replaceChildren(fragment);
+    await setupTabDragAndDrop(tabList);
     if (expandedView) {
       expandedView.replaceChildren();
     }
@@ -3832,6 +4209,7 @@ async function refreshTabs() {
   }
 
   tabList.replaceChildren(fragment);
+  await setupTabDragAndDrop(tabList);
   if (expandedView) {
     expandedView.replaceChildren();
   }

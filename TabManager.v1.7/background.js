@@ -35,6 +35,7 @@ const WORKSPACE_SAVE_IMAGE_MENU_ID = 'workspace-save-image';
 const WORKSPACE_FLUSH_CAPTURE_MSG  = 'WorkspaceFlushPendingCapture';
 const WORKSPACE_SHOW_TOAST_MSG     = 'WorkspaceShowToast';
 const WORKSPACE_UPDATED_KEY        = 'tabManagerWorkspaceUpdated';
+const TAB_DRAG_MOVE_GROUP_MESSAGE  = 'TabManagerMoveGroupToWindowByDrag';
 
 // ── Workspace: IndexedDB ──────────────────────────────────────────
 const WS_DB_NAME    = 'TabManagerWorkspace';
@@ -88,6 +89,29 @@ async function deleteWorkspaceItem(id) {
     tx.objectStore(WS_STORE_NAME).delete(id);
     tx.oncomplete = resolve;
     tx.onerror    = () => reject(tx.error);
+  });
+}
+
+async function updateWorkspaceItemGroup(id, groupId) {
+  const db = await openWorkspaceDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(WS_STORE_NAME, 'readwrite');
+    const store = tx.objectStore(WS_STORE_NAME);
+    const req = store.get(id);
+
+    req.onsuccess = () => {
+      const item = req.result;
+      if (!item) {
+        resolve(false);
+        return;
+      }
+      item.groupId = typeof groupId === 'string' && groupId.length > 0 ? groupId : null;
+      store.put(item);
+      resolve(true);
+    };
+
+    req.onerror = () => reject(req.error);
+    tx.onerror = () => reject(tx.error);
   });
 }
 
@@ -2164,6 +2188,37 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
 });
 
+async function moveGroupToAnotherWindowByDrag({ sourceGroupId, targetWindowId, mergeGroupId }) {
+  if (!Number.isFinite(sourceGroupId) || sourceGroupId < 0 || !Number.isFinite(targetWindowId)) {
+    return false;
+  }
+
+  if (!chrome.tabs?.query || !chrome.tabs?.move) {
+    return false;
+  }
+
+  const sourceTabs = await chrome.tabs.query({ groupId: sourceGroupId });
+  if (!Array.isArray(sourceTabs) || sourceTabs.length === 0) {
+    return false;
+  }
+
+  const tabIds = sourceTabs
+    .filter((tab) => tab && Number.isFinite(tab.id))
+    .map((tab) => tab.id);
+  if (tabIds.length === 0) {
+    return false;
+  }
+
+  await chrome.tabs.move(tabIds, { windowId: targetWindowId, index: -1 });
+
+  if (Number.isFinite(mergeGroupId) && mergeGroupId >= 0 && chrome.tabs?.group) {
+    await chrome.tabs.group({ tabIds, groupId: mergeGroupId });
+  }
+
+  await persistTabListSyncEntity('drag-group-window-move');
+  return true;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message?.type) {
     return;
@@ -2207,6 +2262,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       console.error('Failed to group tabs by domain:', error);
       sendResponse({ ok: false, error: String(error?.message || error) });
     });
+    return true;
+  }
+
+  if (message.type === TAB_DRAG_MOVE_GROUP_MESSAGE) {
+    moveGroupToAnotherWindowByDrag({
+      sourceGroupId: Number.isFinite(message.sourceGroupId) ? message.sourceGroupId : null,
+      targetWindowId: Number.isFinite(message.targetWindowId) ? message.targetWindowId : null,
+      mergeGroupId: Number.isFinite(message.mergeGroupId) ? message.mergeGroupId : null,
+    })
+      .then((ok) => sendResponse({ ok }))
+      .catch((error) => {
+        console.error('TabManagerMoveGroupToWindowByDrag failed:', error);
+        sendResponse({ ok: false, error: String(error?.message || error) });
+      });
     return true;
   }
 
@@ -2300,6 +2369,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(()      => sendResponse({ ok: true }))
       .catch((error) => {
         console.error('WorkspaceDeleteItem failed:', error);
+        sendResponse({ ok: false });
+      });
+    return true;
+  }
+
+  if (message.type === 'WorkspaceUpdateItemGroup') {
+    const id = typeof message.id === 'string' ? message.id : null;
+    if (!id) { sendResponse({ ok: false }); return; }
+    const groupId = typeof message.groupId === 'string' && message.groupId.length > 0
+      ? message.groupId
+      : null;
+
+    updateWorkspaceItemGroup(id, groupId)
+      .then(() => {
+        chrome.storage.local.set({
+          [WORKSPACE_UPDATED_KEY]: { updatedAt: Date.now(), grouped: true },
+        }).catch(() => {});
+        sendResponse({ ok: true });
+      })
+      .catch((error) => {
+        console.error('WorkspaceUpdateItemGroup failed:', error);
         sendResponse({ ok: false });
       });
     return true;
