@@ -11,7 +11,8 @@
     "scripting",
     "storage",
     "tabGroups",
-    "bookmarks"
+    "bookmarks",
+    "contextMenus"
   ],
   "host_permissions": [
     "<all_urls>"
