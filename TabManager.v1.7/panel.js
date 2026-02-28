@@ -60,6 +60,8 @@ const WORKSPACE_REORDER_MESSAGE = 'WorkspaceReorderItems';
 const WORKSPACE_IMAGE_PREVIEW_ID = 'workspace-image-preview';
 const WORKSPACE_IMAGE_PREVIEW_IMAGE_ID = 'workspace-image-preview-image';
 const WORKSPACE_IMAGE_PREVIEW_CLOSE_ID = 'workspace-image-preview-close';
+const WORKSPACE_GROUPS_STORAGE_KEY = 'tabManagerWorkspaceGroups';
+const WORKSPACE_GROUP_EXPANSION_STORAGE_KEY = 'tabManagerWorkspaceGroupExpansion';
 
 const TAB_GROUP_COLORS = {
   grey: '#5f6368',
@@ -109,6 +111,8 @@ let contextMenuState = {
 let workspaceViewOpen = false;
 let workspaceTextMeasureRaf = null;
 let workspaceDraggingCard = null;
+let workspaceGroups = loadWorkspaceGroupsFromStorage();
+let workspaceGroupExpansionState = loadWorkspaceGroupExpansionState();
 
 function getTabListElement() {
   return document.getElementById('tab-list');
@@ -675,6 +679,27 @@ function handlePanelContextMenu(event) {
   if (groupContext) {
     event.stopPropagation();
     showGroupContextMenu(event, groupContext);
+    return;
+  }
+
+  if (workspaceViewOpen) {
+    showContextMenu({
+      type: 'workspace',
+      x: event.clientX,
+      y: event.clientY,
+      items: [{
+        label: '新規グループ',
+        onSelect: () => {
+          const name = window.prompt('グループ名を入力してください', '新規グループ');
+          if (name == null) {
+            return;
+          }
+          workspaceGroups = [...workspaceGroups, { id: generateWorkspaceGroupId(), name: name.trim() || '新規グループ' }];
+          persistWorkspaceGroupsToStorage();
+          renderWorkspaceView();
+        },
+      }],
+    });
   }
 }
 
@@ -1131,6 +1156,64 @@ function pruneStoredGroupExpansionState(validGroupIds) {
 
   groupExpansionState = nextState;
   persistGroupExpansionStateToStorage();
+}
+
+function generateWorkspaceGroupId() {
+  return `ws-group-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function loadWorkspaceGroupsFromStorage() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return [];
+  }
+
+  try {
+    const stored = window.localStorage.getItem(WORKSPACE_GROUPS_STORAGE_KEY);
+    if (!stored) {
+      return [];
+    }
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .filter((item) => item && typeof item.id === 'string' && item.id.length > 0)
+      .map((item) => ({
+        id: item.id,
+        name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : '新規グループ',
+      }));
+  } catch (error) {
+    return [];
+  }
+}
+
+function persistWorkspaceGroupsToStorage() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  window.localStorage.setItem(WORKSPACE_GROUPS_STORAGE_KEY, JSON.stringify(workspaceGroups || []));
+}
+
+function loadWorkspaceGroupExpansionState() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return {};
+  }
+  try {
+    const stored = window.localStorage.getItem(WORKSPACE_GROUP_EXPANSION_STORAGE_KEY);
+    return stored ? JSON.parse(stored) || {} : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function persistWorkspaceGroupExpansionState() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  window.localStorage.setItem(
+    WORKSPACE_GROUP_EXPANSION_STORAGE_KEY,
+    JSON.stringify(workspaceGroupExpansionState || {})
+  );
 }
 
 function loadScrollPositionFromStorage() {
@@ -1989,6 +2072,7 @@ function createTabListItem(tab) {
   if (typeof tab.id === 'number') {
     li.dataset.tabId = String(tab.id);
   }
+  li.draggable = true;
 
   if (typeof tab.url === 'string' && tab.url.length > 0) {
     li.dataset.tabUrl = tab.url;
@@ -1997,6 +2081,7 @@ function createTabListItem(tab) {
   } else {
     delete li.dataset.tabUrl;
   }
+  li.dataset.domain = extractDomainForGrouping(tab?.url || tab?.pendingUrl) || '';
 
   const favicon = createFaviconElement(tab);
   favicon.addEventListener('mouseenter', () => {
@@ -2198,12 +2283,16 @@ function createGroupAccordion(groupId, groupInfo, tabs) {
     tabs
   );
   const color = resolveGroupColor(groupInfo?.color);
+  const domains = new Set(tabs.map((tab) => extractDomainForGrouping(tab?.url || tab?.pendingUrl)).filter(Boolean));
+  const dominantDomain = domains.size === 1 ? Array.from(domains)[0] : '';
 
   const item = document.createElement('li');
   item.className = 'group-item';
+  item.draggable = true;
   item.dataset.groupId = String(groupId);
   item.dataset.defaultLabel = defaultLabel || '';
   item.dataset.defaultExpanded = expandedByDefault ? 'true' : 'false';
+  item.dataset.domain = dominantDomain;
   const storedTabs = Array.isArray(tabs)
     ? tabs.map((tab) => {
         if (!tab || typeof tab !== 'object') {
@@ -2896,21 +2985,44 @@ function setupWorkspaceImagePreviewControls() {
   });
 }
 
-function persistWorkspaceOrder() {
-  const grid = getWorkspaceGrid();
-  if (!grid) {
-    return;
-  }
-  const itemIds = Array.from(grid.querySelectorAll('.workspace-card'))
-    .map((card) => card.dataset.itemId)
-    .filter((id) => typeof id === 'string' && id.length > 0);
-  if (itemIds.length === 0) {
+function persistWorkspaceOrder(itemIds) {
+  const ids = Array.isArray(itemIds)
+    ? itemIds.filter((id) => typeof id === 'string' && id.length > 0)
+    : Array.from(document.querySelectorAll('#workspace-grid .workspace-card'))
+        .map((card) => card.dataset.itemId)
+        .filter((id) => typeof id === 'string' && id.length > 0);
+
+  if (ids.length === 0) {
     return;
   }
 
-  chrome.runtime.sendMessage({ type: WORKSPACE_REORDER_MESSAGE, itemIds }).catch((error) => {
+  chrome.runtime.sendMessage({ type: WORKSPACE_REORDER_MESSAGE, itemIds: ids }).catch((error) => {
     console.error('Failed to persist workspace order:', error);
   });
+}
+
+function clearWorkspaceDropPreview(grid) {
+  if (!grid) {
+    return;
+  }
+  grid.querySelectorAll('.workspace-drop-target--active').forEach((el) => {
+    el.classList.remove('workspace-drop-target--active');
+  });
+  grid.classList.remove('workspace-grid--group-out-preview');
+}
+
+function findWorkspaceDropContainer(target) {
+  if (!(target instanceof Element)) {
+    return null;
+  }
+  const list = target.closest('.workspace-group__list, .workspace-ungrouped-list');
+  return list instanceof HTMLElement ? list : null;
+}
+
+function getWorkspaceGlobalItemIds(grid) {
+  return Array.from(grid.querySelectorAll('.workspace-card'))
+    .map((card) => card.dataset.itemId)
+    .filter((id) => typeof id === 'string' && id.length > 0);
 }
 
 function setupWorkspaceDragAndDrop(grid) {
@@ -2918,6 +3030,8 @@ function setupWorkspaceDragAndDrop(grid) {
     return;
   }
   grid.dataset.dragDropBound = 'true';
+
+  let dragSourceGroupId = null;
 
   grid.addEventListener('dragstart', (event) => {
     const target = event.target;
@@ -2928,8 +3042,11 @@ function setupWorkspaceDragAndDrop(grid) {
     if (!(card instanceof HTMLElement)) {
       return;
     }
+
     workspaceDraggingCard = card;
+    dragSourceGroupId = card.dataset.groupId || null;
     card.classList.add('workspace-card--dragging');
+
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = 'move';
       event.dataTransfer.setData('text/plain', card.dataset.itemId || '');
@@ -2940,31 +3057,73 @@ function setupWorkspaceDragAndDrop(grid) {
     if (!workspaceDraggingCard) {
       return;
     }
-    event.preventDefault();
+
     const target = event.target;
     if (!(target instanceof Element)) {
       return;
     }
+
+    const dropContainer = findWorkspaceDropContainer(target);
+    if (!dropContainer) {
+      return;
+    }
+
+    event.preventDefault();
+    clearWorkspaceDropPreview(grid);
+    dropContainer.classList.add('workspace-drop-target--active');
+
     const card = target.closest('.workspace-card');
     if (!(card instanceof HTMLElement) || card === workspaceDraggingCard) {
+      if (dropContainer.classList.contains('workspace-ungrouped-list') && dragSourceGroupId) {
+        grid.classList.add('workspace-grid--group-out-preview');
+      }
       return;
     }
 
     const rect = card.getBoundingClientRect();
     const placeBefore = event.clientY < rect.top + rect.height / 2;
     if (placeBefore) {
-      grid.insertBefore(workspaceDraggingCard, card);
+      dropContainer.insertBefore(workspaceDraggingCard, card);
     } else {
-      grid.insertBefore(workspaceDraggingCard, card.nextSibling);
+      dropContainer.insertBefore(workspaceDraggingCard, card.nextSibling);
+    }
+
+    if (dropContainer.classList.contains('workspace-ungrouped-list') && dragSourceGroupId) {
+      grid.classList.add('workspace-grid--group-out-preview');
     }
   });
 
-  grid.addEventListener('drop', (event) => {
+  grid.addEventListener('drop', async (event) => {
     if (!workspaceDraggingCard) {
       return;
     }
+
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    const dropContainer = findWorkspaceDropContainer(target);
+    if (!dropContainer) {
+      return;
+    }
+
     event.preventDefault();
-    persistWorkspaceOrder();
+
+    const itemId = workspaceDraggingCard.dataset.itemId;
+    const targetGroupId = dropContainer.dataset.groupId || null;
+
+    try {
+      if (itemId) {
+        await updateWorkspaceItemGroup(itemId, targetGroupId);
+      }
+      persistWorkspaceOrder(getWorkspaceGlobalItemIds(grid));
+    } catch (error) {
+      console.error('Failed to update workspace drag result:', error);
+    } finally {
+      clearWorkspaceDropPreview(grid);
+      await renderWorkspaceView();
+    }
   });
 
   grid.addEventListener('dragend', () => {
@@ -2972,6 +3131,8 @@ function setupWorkspaceDragAndDrop(grid) {
       workspaceDraggingCard.classList.remove('workspace-card--dragging');
     }
     workspaceDraggingCard = null;
+    dragSourceGroupId = null;
+    clearWorkspaceDropPreview(grid);
   });
 }
 
@@ -3025,6 +3186,64 @@ function setupWorkspaceControls() {
   applyWorkspaceViewState();
 }
 
+async function updateWorkspaceItemGroup(itemId, groupId) {
+  return chrome.runtime.sendMessage({
+    type: 'WorkspaceUpdateItemGroup',
+    id: itemId,
+    groupId,
+  });
+}
+
+function createWorkspaceGroupSection(group, items) {
+  const section = document.createElement('section');
+  section.className = 'workspace-group';
+  section.dataset.groupId = group.id;
+
+  const header = document.createElement('button');
+  header.type = 'button';
+  header.className = 'workspace-group__header';
+  const expanded = workspaceGroupExpansionState[group.id] !== false;
+  header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+
+  const title = document.createElement('span');
+  title.className = 'workspace-group__title';
+  title.textContent = group.name;
+
+  const count = document.createElement('span');
+  count.className = 'workspace-group__count';
+  count.textContent = `(${items.length})`;
+
+  header.appendChild(title);
+  header.appendChild(count);
+
+  const body = document.createElement('div');
+  body.className = 'workspace-group__body';
+  body.hidden = !expanded;
+
+  const list = document.createElement('div');
+  list.className = 'workspace-group__list';
+  list.dataset.groupId = group.id;
+
+  for (const item of items) {
+    list.appendChild(createWorkspaceCard(item));
+  }
+
+  body.appendChild(list);
+
+  header.addEventListener('click', () => {
+    const isExpanded = header.getAttribute('aria-expanded') === 'true';
+    const next = !isExpanded;
+    header.setAttribute('aria-expanded', next ? 'true' : 'false');
+    body.hidden = !next;
+    workspaceGroupExpansionState[group.id] = next;
+    persistWorkspaceGroupExpansionState();
+  });
+
+  section.appendChild(header);
+  section.appendChild(body);
+  return section;
+}
+
 async function renderWorkspaceView() {
   const grid = getWorkspaceGrid();
   if (!grid) return;
@@ -3038,33 +3257,51 @@ async function renderWorkspaceView() {
     return;
   }
 
-  // 並び順: 手動ソートがあれば優先、なければ保存日時の降順
   items.sort((a, b) => {
     const aOrder = Number.isFinite(a.sortOrder) ? a.sortOrder : null;
     const bOrder = Number.isFinite(b.sortOrder) ? b.sortOrder : null;
-    if (aOrder !== null && bOrder !== null) {
-      return aOrder - bOrder;
-    }
-    if (aOrder !== null) {
-      return -1;
-    }
-    if (bOrder !== null) {
-      return 1;
-    }
+    if (aOrder !== null && bOrder !== null) return aOrder - bOrder;
+    if (aOrder !== null) return -1;
+    if (bOrder !== null) return 1;
     return b.createdAt - a.createdAt;
   });
 
-  const fragment = document.createDocumentFragment();
-  if (items.length === 0) {
-    const empty = document.createElement('p');
-    empty.className   = 'workspace-empty';
-    empty.textContent = '右クリック → 「ワークスペースに保存」で追加できます';
-    fragment.appendChild(empty);
-  } else {
-    for (const item of items) {
-      fragment.appendChild(createWorkspaceCard(item));
+  const groupedItems = new Map();
+  const ungrouped = [];
+  for (const item of items) {
+    if (typeof item?.groupId === 'string' && item.groupId.length > 0) {
+      if (!groupedItems.has(item.groupId)) {
+        groupedItems.set(item.groupId, []);
+      }
+      groupedItems.get(item.groupId).push(item);
+    } else {
+      ungrouped.push(item);
     }
   }
+
+  const fragment = document.createDocumentFragment();
+  for (const group of workspaceGroups) {
+    const itemsInGroup = groupedItems.get(group.id) || [];
+    fragment.appendChild(createWorkspaceGroupSection(group, itemsInGroup));
+  }
+
+  const ungroupedList = document.createElement('div');
+  ungroupedList.className = 'workspace-ungrouped-list';
+  ungroupedList.dataset.groupId = '';
+
+  for (const item of ungrouped) {
+    ungroupedList.appendChild(createWorkspaceCard(item));
+  }
+
+  fragment.appendChild(ungroupedList);
+
+  if (items.length === 0 && workspaceGroups.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'workspace-empty';
+    empty.textContent = '右クリック → 「ワークスペースに保存」で追加できます';
+    fragment.appendChild(empty);
+  }
+
   grid.replaceChildren(fragment);
   setupWorkspaceDragAndDrop(grid);
   scheduleWorkspaceTextClampMeasurement();
@@ -3109,6 +3346,7 @@ function createWorkspaceCard(item) {
   const card = document.createElement('div');
   card.className      = 'workspace-card';
   card.dataset.itemId = item.id;
+  card.dataset.groupId = typeof item.groupId === 'string' ? item.groupId : '';
   card.draggable = true;
 
   // ─ コンテンツ ─────────────────────────────────────────────────
@@ -3647,6 +3885,100 @@ function sortWindowsForExpandedView(windows, currentWindowId) {
   return copied;
 }
 
+
+async function setupTabDragAndDrop(root) {
+  if (!root || root.dataset.tabDragDropBound === 'true') {
+    return;
+  }
+  root.dataset.tabDragDropBound = 'true';
+
+  let dragging = null;
+
+  root.addEventListener('dragstart', (event) => {
+    const tabItem = event.target instanceof Element ? event.target.closest('.tab-item') : null;
+    if (!(tabItem instanceof HTMLElement)) {
+      return;
+    }
+
+    const metadata = tabMetadataMap.get(tabItem);
+    if (!metadata || !metadata.tab || !Number.isFinite(metadata.tab.id)) {
+      return;
+    }
+
+    dragging = { tab: metadata.tab, source: tabItem };
+    tabItem.classList.add('tab-item--dragging');
+
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', String(metadata.tab.id));
+    }
+  });
+
+  root.addEventListener('dragover', (event) => {
+    if (!dragging) {
+      return;
+    }
+
+    const targetTab = event.target instanceof Element ? event.target.closest('.tab-item') : null;
+    if (!targetTab) {
+      return;
+    }
+
+    event.preventDefault();
+  });
+
+  root.addEventListener('drop', async (event) => {
+    if (!dragging) {
+      return;
+    }
+
+    const targetTab = event.target instanceof Element ? event.target.closest('.tab-item') : null;
+    if (!(targetTab instanceof HTMLElement)) {
+      return;
+    }
+
+    const targetMeta = tabMetadataMap.get(targetTab);
+    if (!targetMeta || !targetMeta.tab || !Number.isFinite(targetMeta.tab.index)) {
+      return;
+    }
+
+    const sourceTab = dragging.tab;
+    if (!sourceTab || !Number.isFinite(sourceTab.id)) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const rect = targetTab.getBoundingClientRect();
+    const dropBefore = event.clientY < rect.top + rect.height / 2;
+    let targetIndex = targetMeta.tab.index;
+
+    if (!dropBefore) {
+      targetIndex += 1;
+    }
+
+    if (Number.isFinite(sourceTab.index) && sourceTab.index < targetIndex) {
+      targetIndex -= 1;
+    }
+
+    if (Number.isFinite(sourceTab.index) && sourceTab.index === targetIndex) {
+      return;
+    }
+
+    try {
+      await chrome.tabs.move(sourceTab.id, { index: targetIndex });
+      await refreshTabs();
+    } catch (error) {
+      console.error('Failed to reorder tab by drag and drop:', error);
+    }
+  });
+
+  root.addEventListener('dragend', () => {
+    dragging?.source?.classList.remove('tab-item--dragging');
+    dragging = null;
+  });
+}
+
 async function refreshTabs() {
   hideContextMenu();
   const requestId = ++refreshTabsRequestId;
@@ -3803,6 +4135,7 @@ async function refreshTabs() {
     }
 
     tabList.replaceChildren(fragment);
+    await setupTabDragAndDrop(tabList);
     if (expandedView) {
       expandedView.replaceChildren();
     }
@@ -3832,6 +4165,7 @@ async function refreshTabs() {
   }
 
   tabList.replaceChildren(fragment);
+  await setupTabDragAndDrop(tabList);
   if (expandedView) {
     expandedView.replaceChildren();
   }
