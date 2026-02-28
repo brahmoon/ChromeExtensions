@@ -3293,14 +3293,6 @@ async function renderWorkspaceView() {
     ungroupedList.appendChild(createWorkspaceCard(item));
   }
 
-  if (ungrouped.length === 0 && workspaceGroups.length > 0) {
-    ungroupedList.classList.add('workspace-ungrouped-list--empty');
-    const hint = document.createElement('p');
-    hint.className = 'workspace-ungrouped-list__hint';
-    hint.textContent = 'ここにドロップするとグループ外に移動します';
-    ungroupedList.appendChild(hint);
-  }
-
   fragment.appendChild(ungroupedList);
 
   if (items.length === 0 && workspaceGroups.length === 0) {

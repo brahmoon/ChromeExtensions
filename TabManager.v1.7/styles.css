@@ -800,19 +800,6 @@ body.expanded-view-enabled .header-icon-button--close {
   outline-offset: 4px;
 }
 
-.workspace-ungrouped-list--empty {
-  border: 1px dashed var(--tm-border);
-  border-radius: 8px;
-  padding: 8px;
-}
-
-.workspace-ungrouped-list__hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--tm-text-muted);
-  text-align: center;
-}
-
 .workspace-empty {
   margin: 24px 4px 0;
   font-size: 13px;
@@ -965,9 +952,18 @@ body.expanded-view-enabled #workspace-view .workspace-card {
   flex: 0 0 auto;
 }
 
+body.expanded-view-enabled #workspace-view .workspace-group__list,
+body.expanded-view-enabled #workspace-view .workspace-ungrouped-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 12px;
+}
+
 body.expanded-view-enabled #workspace-view .workspace-group .workspace-card,
 body.expanded-view-enabled #workspace-view .workspace-ungrouped-list .workspace-card {
-  width: 100%;
+  width: min(340px, calc(50% - 6px));
+  flex: 0 0 auto;
 }
 
 
