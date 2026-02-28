@@ -1,5 +1,6 @@
 const PANEL_ID = 'tmx-tab-manager-panel';
 const PANEL_WIDTH = 400;
+const PANEL_EXPANDED_WIDTH = '100vw';
 const PREVIEW_OVERLAY_ID = 'tmx-tab-manager-preview-overlay';
 const PREVIEW_OVERLAY_MIN_HEIGHT = 180;
 const PREVIEW_OVERLAY_TRANSITION_MS = 180;
@@ -11,6 +12,7 @@ const EXTENSION_ELEMENT_ATTRIBUTE = 'data-tmx-tab-manager-element';
 
 let previewOverlayElements = null;
 let previewOverlayVisible = false;
+let panelExpanded = false;
 
 function escapeHtmlAttribute(value) {
   if (typeof value !== 'string') {
@@ -21,6 +23,24 @@ function escapeHtmlAttribute(value) {
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+function getPanelRightInset() {
+  return panelExpanded ? '0px' : `${PANEL_WIDTH}px`;
+}
+
+function applyPanelLayout(iframe) {
+  if (!iframe) {
+    return;
+  }
+
+  iframe.style.width = panelExpanded ? PANEL_EXPANDED_WIDTH : `${PANEL_WIDTH}px`;
+  iframe.style.left = panelExpanded ? '0' : 'auto';
+  iframe.style.right = '0';
+
+  if (previewOverlayElements?.container) {
+    previewOverlayElements.container.style.right = getPanelRightInset();
+  }
 }
 
 function ensurePreviewOverlayElements() {
@@ -35,7 +55,7 @@ function ensurePreviewOverlayElements() {
     position: fixed;
     top: 0;
     left: 0;
-    right: ${PANEL_WIDTH}px;
+    right: ${getPanelRightInset()};
     bottom: 0;
     z-index: 999998;
     pointer-events: none;
@@ -284,6 +304,7 @@ function createPanelElement() {
     position: fixed;
     top: 0;
     right: 0;
+    left: auto;
     width: ${PANEL_WIDTH}px;
     height: 100%;
     z-index: 999999;
@@ -308,17 +329,20 @@ function getPanel() {
 function openPanel() {
   const existing = getPanel();
   if (existing) {
+    applyPanelLayout(existing);
     existing.style.transform = 'translateX(0)';
     return existing;
   }
 
   const iframe = createPanelElement();
   (document.body || document.documentElement).appendChild(iframe);
+  applyPanelLayout(iframe);
   iframe.style.transform = 'translateX(0)';
   return iframe;
 }
 
 function closePanel() {
+  panelExpanded = false;
   hidePreviewOverlay();
   disposePreviewOverlay();
   const iframe = getPanel();
@@ -366,7 +390,14 @@ if (!window.__tabManagerMessageHandler) {
       return;
     }
 
+    if (event.data?.type === 'TabManagerExpandedViewChanged') {
+      panelExpanded = Boolean(event.data?.detail?.expanded);
+      applyPanelLayout(getPanel());
+      return;
+    }
+
     if (event.data?.type === 'TabManagerClosePanel') {
+      panelExpanded = false;
       closePanel();
     }
   };
