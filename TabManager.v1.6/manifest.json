@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "TabManager.v1.4",
-  "version": "1.4",
+  "name": "TabManager.v1.6",
+  "version": "1.6",
   "action": {
     "default_title": "TabManager"
   },
