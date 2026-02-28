@@ -91,6 +91,36 @@ async function deleteWorkspaceItem(id) {
   });
 }
 
+async function reorderWorkspaceItems(itemIds) {
+  const ids = Array.isArray(itemIds)
+    ? itemIds.filter((id) => typeof id === 'string' && id.length > 0)
+    : [];
+  if (ids.length === 0) {
+    return;
+  }
+
+  const db = await openWorkspaceDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(WS_STORE_NAME, 'readwrite');
+    const store = tx.objectStore(WS_STORE_NAME);
+
+    ids.forEach((id, index) => {
+      const getReq = store.get(id);
+      getReq.onsuccess = () => {
+        const item = getReq.result;
+        if (!item) {
+          return;
+        }
+        item.sortOrder = index;
+        store.put(item);
+      };
+    });
+
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 // ── Workspace: contextMenus登録 ───────────────────────────────────
 // MV3 Service Worker は起動のたびに初期化されるため
 // onInstalled と onStartup の両方で再登録する。
@@ -154,6 +184,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     pageTitle: pageTitle,
     groupId:   null,
     createdAt: Date.now(),
+    sortOrder: -Date.now(),
     windowId:  tab.windowId ?? null,
   };
 
@@ -2269,6 +2300,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(()      => sendResponse({ ok: true }))
       .catch((error) => {
         console.error('WorkspaceDeleteItem failed:', error);
+        sendResponse({ ok: false });
+      });
+    return true;
+  }
+
+  if (message.type === 'WorkspaceReorderItems') {
+    reorderWorkspaceItems(message.itemIds)
+      .then(() => {
+        chrome.storage.local.set({
+          [WORKSPACE_UPDATED_KEY]: { updatedAt: Date.now(), reordered: true },
+        }).catch(() => {});
+        sendResponse({ ok: true });
+      })
+      .catch((error) => {
+        console.error('WorkspaceReorderItems failed:', error);
         sendResponse({ ok: false });
       });
     return true;

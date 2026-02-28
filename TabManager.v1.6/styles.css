@@ -928,3 +928,43 @@ body.expanded-view-enabled #workspace-view .workspace-card {
   width: min(340px, calc(50% - 6px));
   flex: 0 0 auto;
 }
+
+
+.workspace-card--dragging {
+  opacity: 0.45;
+}
+
+.workspace-image-preview {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.82);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+
+.workspace-image-preview[hidden] {
+  display: none;
+}
+
+.workspace-image-preview__image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.workspace-image-preview__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  cursor: pointer;
+}
