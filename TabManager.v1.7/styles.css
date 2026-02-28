@@ -780,6 +780,37 @@ body.expanded-view-enabled .header-icon-button--close {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
+}
+
+.workspace-grid--group-out-preview {
+  outline: 1px dashed var(--tm-accent);
+  outline-offset: -2px;
+}
+
+.workspace-ungrouped-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+
+.workspace-drop-target--active {
+  outline: 1px dashed var(--tm-accent);
+  outline-offset: 4px;
+}
+
+.workspace-ungrouped-list--empty {
+  border: 1px dashed var(--tm-border);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.workspace-ungrouped-list__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--tm-text-muted);
+  text-align: center;
 }
 
 .workspace-empty {
@@ -797,6 +828,10 @@ body.expanded-view-enabled .header-icon-button--close {
   border-radius: 8px;
   padding: 10px 32px 10px 12px;
   transition: border-color 0.15s ease;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .workspace-card:hover {
@@ -805,6 +840,7 @@ body.expanded-view-enabled .header-icon-button--close {
 
 .workspace-card__text-wrap {
   margin-bottom: 6px;
+  min-width: 0;
 }
 
 .workspace-card__text {
@@ -929,6 +965,11 @@ body.expanded-view-enabled #workspace-view .workspace-card {
   flex: 0 0 auto;
 }
 
+body.expanded-view-enabled #workspace-view .workspace-group .workspace-card,
+body.expanded-view-enabled #workspace-view .workspace-ungrouped-list .workspace-card {
+  width: 100%;
+}
+
 
 .workspace-card--dragging {
   opacity: 0.45;
@@ -974,15 +1015,6 @@ body.expanded-view-enabled #workspace-view .workspace-card {
   opacity: 0.5;
 }
 
-.group-item--drop-highlight {
-  outline: 2px solid var(--tm-accent);
-  outline-offset: -2px;
-  background: var(--tm-overlay);
-}
-
-.window-column--preview {
-  border-color: var(--tm-accent);
-}
 
 .workspace-group {
   border: 1px solid var(--tm-border);
@@ -990,6 +1022,9 @@ body.expanded-view-enabled #workspace-view .workspace-card {
   overflow: hidden;
   margin-bottom: 10px;
   background: var(--tm-soft-overlay);
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .workspace-group__header {
@@ -1025,15 +1060,14 @@ body.expanded-view-enabled #workspace-view .workspace-card {
 
 .workspace-group__body {
   padding: 8px;
+  min-width: 0;
 }
 
 .workspace-group__list {
   min-height: 26px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
+  min-width: 0;
 }
 
-.workspace-group__list--dropping {
-  outline: 1px dashed var(--tm-accent);
-  outline-offset: 4px;
-}

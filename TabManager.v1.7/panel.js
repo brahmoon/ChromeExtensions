@@ -62,7 +62,6 @@ const WORKSPACE_IMAGE_PREVIEW_IMAGE_ID = 'workspace-image-preview-image';
 const WORKSPACE_IMAGE_PREVIEW_CLOSE_ID = 'workspace-image-preview-close';
 const WORKSPACE_GROUPS_STORAGE_KEY = 'tabManagerWorkspaceGroups';
 const WORKSPACE_GROUP_EXPANSION_STORAGE_KEY = 'tabManagerWorkspaceGroupExpansion';
-const TAB_DRAG_MOVE_GROUP_MESSAGE = 'TabManagerMoveGroupToWindowByDrag';
 
 const TAB_GROUP_COLORS = {
   grey: '#5f6368',
@@ -2986,21 +2985,44 @@ function setupWorkspaceImagePreviewControls() {
   });
 }
 
-function persistWorkspaceOrder() {
-  const grid = getWorkspaceGrid();
-  if (!grid) {
-    return;
-  }
-  const itemIds = Array.from(grid.querySelectorAll('.workspace-card'))
-    .map((card) => card.dataset.itemId)
-    .filter((id) => typeof id === 'string' && id.length > 0);
-  if (itemIds.length === 0) {
+function persistWorkspaceOrder(itemIds) {
+  const ids = Array.isArray(itemIds)
+    ? itemIds.filter((id) => typeof id === 'string' && id.length > 0)
+    : Array.from(document.querySelectorAll('#workspace-grid .workspace-card'))
+        .map((card) => card.dataset.itemId)
+        .filter((id) => typeof id === 'string' && id.length > 0);
+
+  if (ids.length === 0) {
     return;
   }
 
-  chrome.runtime.sendMessage({ type: WORKSPACE_REORDER_MESSAGE, itemIds }).catch((error) => {
+  chrome.runtime.sendMessage({ type: WORKSPACE_REORDER_MESSAGE, itemIds: ids }).catch((error) => {
     console.error('Failed to persist workspace order:', error);
   });
+}
+
+function clearWorkspaceDropPreview(grid) {
+  if (!grid) {
+    return;
+  }
+  grid.querySelectorAll('.workspace-drop-target--active').forEach((el) => {
+    el.classList.remove('workspace-drop-target--active');
+  });
+  grid.classList.remove('workspace-grid--group-out-preview');
+}
+
+function findWorkspaceDropContainer(target) {
+  if (!(target instanceof Element)) {
+    return null;
+  }
+  const list = target.closest('.workspace-group__list, .workspace-ungrouped-list');
+  return list instanceof HTMLElement ? list : null;
+}
+
+function getWorkspaceGlobalItemIds(grid) {
+  return Array.from(grid.querySelectorAll('.workspace-card'))
+    .map((card) => card.dataset.itemId)
+    .filter((id) => typeof id === 'string' && id.length > 0);
 }
 
 function setupWorkspaceDragAndDrop(grid) {
@@ -3008,6 +3030,8 @@ function setupWorkspaceDragAndDrop(grid) {
     return;
   }
   grid.dataset.dragDropBound = 'true';
+
+  let dragSourceGroupId = null;
 
   grid.addEventListener('dragstart', (event) => {
     const target = event.target;
@@ -3018,8 +3042,11 @@ function setupWorkspaceDragAndDrop(grid) {
     if (!(card instanceof HTMLElement)) {
       return;
     }
+
     workspaceDraggingCard = card;
+    dragSourceGroupId = card.dataset.groupId || null;
     card.classList.add('workspace-card--dragging');
+
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = 'move';
       event.dataTransfer.setData('text/plain', card.dataset.itemId || '');
@@ -3030,31 +3057,73 @@ function setupWorkspaceDragAndDrop(grid) {
     if (!workspaceDraggingCard) {
       return;
     }
-    event.preventDefault();
+
     const target = event.target;
     if (!(target instanceof Element)) {
       return;
     }
+
+    const dropContainer = findWorkspaceDropContainer(target);
+    if (!dropContainer) {
+      return;
+    }
+
+    event.preventDefault();
+    clearWorkspaceDropPreview(grid);
+    dropContainer.classList.add('workspace-drop-target--active');
+
     const card = target.closest('.workspace-card');
     if (!(card instanceof HTMLElement) || card === workspaceDraggingCard) {
+      if (dropContainer.classList.contains('workspace-ungrouped-list') && dragSourceGroupId) {
+        grid.classList.add('workspace-grid--group-out-preview');
+      }
       return;
     }
 
     const rect = card.getBoundingClientRect();
     const placeBefore = event.clientY < rect.top + rect.height / 2;
     if (placeBefore) {
-      grid.insertBefore(workspaceDraggingCard, card);
+      dropContainer.insertBefore(workspaceDraggingCard, card);
     } else {
-      grid.insertBefore(workspaceDraggingCard, card.nextSibling);
+      dropContainer.insertBefore(workspaceDraggingCard, card.nextSibling);
+    }
+
+    if (dropContainer.classList.contains('workspace-ungrouped-list') && dragSourceGroupId) {
+      grid.classList.add('workspace-grid--group-out-preview');
     }
   });
 
-  grid.addEventListener('drop', (event) => {
+  grid.addEventListener('drop', async (event) => {
     if (!workspaceDraggingCard) {
       return;
     }
+
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    const dropContainer = findWorkspaceDropContainer(target);
+    if (!dropContainer) {
+      return;
+    }
+
     event.preventDefault();
-    persistWorkspaceOrder();
+
+    const itemId = workspaceDraggingCard.dataset.itemId;
+    const targetGroupId = dropContainer.dataset.groupId || null;
+
+    try {
+      if (itemId) {
+        await updateWorkspaceItemGroup(itemId, targetGroupId);
+      }
+      persistWorkspaceOrder(getWorkspaceGlobalItemIds(grid));
+    } catch (error) {
+      console.error('Failed to update workspace drag result:', error);
+    } finally {
+      clearWorkspaceDropPreview(grid);
+      await renderWorkspaceView();
+    }
   });
 
   grid.addEventListener('dragend', () => {
@@ -3062,6 +3131,8 @@ function setupWorkspaceDragAndDrop(grid) {
       workspaceDraggingCard.classList.remove('workspace-card--dragging');
     }
     workspaceDraggingCard = null;
+    dragSourceGroupId = null;
+    clearWorkspaceDropPreview(grid);
   });
 }
 
@@ -3173,42 +3244,6 @@ function createWorkspaceGroupSection(group, items) {
   return section;
 }
 
-function setupWorkspaceGroupDropZones(grid) {
-  const lists = grid.querySelectorAll('.workspace-group__list');
-  lists.forEach((list) => {
-    if (!(list instanceof HTMLElement) || list.dataset.dropBound === 'true') {
-      return;
-    }
-    list.dataset.dropBound = 'true';
-
-    list.addEventListener('dragover', (event) => {
-      if (!workspaceDraggingCard) {
-        return;
-      }
-      event.preventDefault();
-      list.classList.add('workspace-group__list--dropping');
-    });
-
-    list.addEventListener('dragleave', () => {
-      list.classList.remove('workspace-group__list--dropping');
-    });
-
-    list.addEventListener('drop', async (event) => {
-      if (!workspaceDraggingCard) {
-        return;
-      }
-      event.preventDefault();
-      list.classList.remove('workspace-group__list--dropping');
-      const itemId = workspaceDraggingCard.dataset.itemId;
-      if (!itemId) {
-        return;
-      }
-      await updateWorkspaceItemGroup(itemId, list.dataset.groupId || null);
-      await renderWorkspaceView();
-    });
-  });
-}
-
 async function renderWorkspaceView() {
   const grid = getWorkspaceGrid();
   if (!grid) return;
@@ -3250,11 +3285,23 @@ async function renderWorkspaceView() {
     fragment.appendChild(createWorkspaceGroupSection(group, itemsInGroup));
   }
 
-  if (ungrouped.length > 0) {
-    for (const item of ungrouped) {
-      fragment.appendChild(createWorkspaceCard(item));
-    }
+  const ungroupedList = document.createElement('div');
+  ungroupedList.className = 'workspace-ungrouped-list';
+  ungroupedList.dataset.groupId = '';
+
+  for (const item of ungrouped) {
+    ungroupedList.appendChild(createWorkspaceCard(item));
   }
+
+  if (ungrouped.length === 0 && workspaceGroups.length > 0) {
+    ungroupedList.classList.add('workspace-ungrouped-list--empty');
+    const hint = document.createElement('p');
+    hint.className = 'workspace-ungrouped-list__hint';
+    hint.textContent = 'ここにドロップするとグループ外に移動します';
+    ungroupedList.appendChild(hint);
+  }
+
+  fragment.appendChild(ungroupedList);
 
   if (items.length === 0 && workspaceGroups.length === 0) {
     const empty = document.createElement('p');
@@ -3308,6 +3355,7 @@ function createWorkspaceCard(item) {
   const card = document.createElement('div');
   card.className      = 'workspace-card';
   card.dataset.itemId = item.id;
+  card.dataset.groupId = typeof item.groupId === 'string' ? item.groupId : '';
   card.draggable = true;
 
   // ─ コンテンツ ─────────────────────────────────────────────────
@@ -3847,7 +3895,7 @@ function sortWindowsForExpandedView(windows, currentWindowId) {
 }
 
 
-async function setupTabDragAndDrop(root, { expandedMode = false } = {}) {
+async function setupTabDragAndDrop(root) {
   if (!root || root.dataset.tabDragDropBound === 'true') {
     return;
   }
@@ -3860,12 +3908,15 @@ async function setupTabDragAndDrop(root, { expandedMode = false } = {}) {
     if (!(tabItem instanceof HTMLElement)) {
       return;
     }
+
     const metadata = tabMetadataMap.get(tabItem);
     if (!metadata || !metadata.tab || !Number.isFinite(metadata.tab.id)) {
       return;
     }
+
     dragging = { tab: metadata.tab, source: tabItem };
     tabItem.classList.add('tab-item--dragging');
+
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = 'move';
       event.dataTransfer.setData('text/plain', String(metadata.tab.id));
@@ -3876,10 +3927,12 @@ async function setupTabDragAndDrop(root, { expandedMode = false } = {}) {
     if (!dragging) {
       return;
     }
-    const target = event.target instanceof Element ? event.target.closest('.group-tab-list, .window-column__list, #tab-list, .group-item') : null;
-    if (!target) {
+
+    const targetTab = event.target instanceof Element ? event.target.closest('.tab-item') : null;
+    if (!targetTab) {
       return;
     }
+
     event.preventDefault();
   });
 
@@ -3887,137 +3940,51 @@ async function setupTabDragAndDrop(root, { expandedMode = false } = {}) {
     if (!dragging) {
       return;
     }
-    const targetElement = event.target instanceof Element ? event.target : null;
-    if (!targetElement) {
+
+    const targetTab = event.target instanceof Element ? event.target.closest('.tab-item') : null;
+    if (!(targetTab instanceof HTMLElement)) {
       return;
     }
 
-    const targetGroup = targetElement.closest('.group-item');
-    const targetWindow = targetElement.closest('.window-column');
-    const targetDomain = targetGroup?.dataset?.domain || '';
-    const tabDomain = extractDomainForGrouping(dragging.tab.url || dragging.tab.pendingUrl) || '';
-
-    let autoGroupingEnabled = false;
-    try {
-      const stored = await chrome.storage.local.get({ [AUTO_DOMAIN_GROUP_STORAGE_KEY]: false });
-      autoGroupingEnabled = Boolean(stored[AUTO_DOMAIN_GROUP_STORAGE_KEY]);
-    } catch (error) {}
-
-    if (autoGroupingEnabled && tabDomain && targetDomain && tabDomain !== targetDomain) {
-      const ok = window.confirm('異なるドメイングループへ移動するには自働グループ化を無効化します。続行しますか？');
-      if (!ok) {
-        dragging.source?.classList.remove('tab-item--dragging');
-        dragging = null;
-        return;
-      }
-      await chrome.storage.local.set({ [AUTO_DOMAIN_GROUP_STORAGE_KEY]: false });
+    const targetMeta = tabMetadataMap.get(targetTab);
+    if (!targetMeta || !targetMeta.tab || !Number.isFinite(targetMeta.tab.index)) {
+      return;
     }
 
-    const windowId = Number.parseInt(targetWindow?.dataset?.windowId || `${dragging.tab.windowId || ''}`, 10);
-    const groupId = Number.parseInt(targetGroup?.dataset?.groupId || '-1', 10);
+    const sourceTab = dragging.tab;
+    if (!sourceTab || !Number.isFinite(sourceTab.id)) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const rect = targetTab.getBoundingClientRect();
+    const dropBefore = event.clientY < rect.top + rect.height / 2;
+    let targetIndex = targetMeta.tab.index;
+
+    if (!dropBefore) {
+      targetIndex += 1;
+    }
+
+    if (Number.isFinite(sourceTab.index) && sourceTab.index < targetIndex) {
+      targetIndex -= 1;
+    }
+
+    if (Number.isFinite(sourceTab.index) && sourceTab.index === targetIndex) {
+      return;
+    }
 
     try {
-      if (Number.isFinite(windowId) && windowId !== dragging.tab.windowId) {
-        await chrome.tabs.move(dragging.tab.id, { windowId, index: -1 });
-      }
-      if (Number.isFinite(groupId) && groupId >= 0) {
-        await chrome.tabs.group({ tabIds: [dragging.tab.id], groupId });
-      }
+      await chrome.tabs.move(sourceTab.id, { index: targetIndex });
       await refreshTabs();
     } catch (error) {
-      console.error('Failed to move tab by drag and drop:', error);
+      console.error('Failed to reorder tab by drag and drop:', error);
     }
   });
 
   root.addEventListener('dragend', () => {
     dragging?.source?.classList.remove('tab-item--dragging');
     dragging = null;
-  });
-
-  if (expandedMode) {
-    root.addEventListener('dragover', (event) => {
-      if (!dragging) {
-        return;
-      }
-      const column = event.target instanceof Element ? event.target.closest('.window-column') : null;
-      root.querySelectorAll('.window-column--preview').forEach((item) => item.classList.remove('window-column--preview'));
-      root.querySelectorAll('.group-item--drop-highlight').forEach((item) => item.classList.remove('group-item--drop-highlight'));
-      if (!(column instanceof HTMLElement)) {
-        return;
-      }
-      column.classList.add('window-column--preview');
-      const tabDomain = extractDomainForGrouping(dragging.tab.url || dragging.tab.pendingUrl);
-      if (tabDomain) {
-        const candidate = Array.from(column.querySelectorAll('.group-item')).find((item) => item.dataset.domain === tabDomain);
-        if (candidate) {
-          candidate.classList.add('group-item--drop-highlight');
-        }
-      }
-    });
-  }
-}
-
-async function setupExpandedGroupWindowMove(expandedView) {
-  if (!expandedView || expandedView.dataset.groupDragDropBound === 'true') {
-    return;
-  }
-  expandedView.dataset.groupDragDropBound = 'true';
-
-  let draggingGroup = null;
-  expandedView.addEventListener('dragstart', (event) => {
-    const group = event.target instanceof Element ? event.target.closest('.group-item') : null;
-    if (!(group instanceof HTMLElement)) {
-      return;
-    }
-    const column = group.closest('.window-column');
-    draggingGroup = {
-      groupId: Number.parseInt(group.dataset.groupId || '', 10),
-      sourceWindowId: Number.parseInt(column?.dataset.windowId || '', 10),
-      domain: group.dataset.domain || '',
-    };
-  });
-
-  expandedView.addEventListener('drop', async (event) => {
-    if (!draggingGroup) {
-      return;
-    }
-    const targetColumn = event.target instanceof Element ? event.target.closest('.window-column') : null;
-    if (!(targetColumn instanceof HTMLElement)) {
-      return;
-    }
-
-    const targetWindowId = Number.parseInt(targetColumn.dataset.windowId || '', 10);
-    if (!Number.isFinite(targetWindowId) || targetWindowId === draggingGroup.sourceWindowId) {
-      return;
-    }
-
-    const sameDomainGroup = Array.from(targetColumn.querySelectorAll('.group-item')).find((item) => item.dataset.domain === draggingGroup.domain);
-    let mergeGroupId = null;
-    if (sameDomainGroup) {
-      const merge = window.confirm('同じドメイングループが存在します。統合しますか？');
-      if (merge) {
-        mergeGroupId = Number.parseInt(sameDomainGroup.dataset.groupId || '', 10);
-      } else {
-        const disableAuto = window.confirm('統合しない場合は自働グループ化を無効化します。続行しますか？');
-        if (!disableAuto) {
-          return;
-        }
-        await chrome.storage.local.set({ [AUTO_DOMAIN_GROUP_STORAGE_KEY]: false });
-      }
-    }
-
-    await chrome.runtime.sendMessage({
-      type: TAB_DRAG_MOVE_GROUP_MESSAGE,
-      sourceGroupId: draggingGroup.groupId,
-      targetWindowId,
-      mergeGroupId,
-    });
-
-    await refreshTabs();
-  });
-
-  expandedView.addEventListener('dragend', () => {
-    draggingGroup = null;
   });
 }
 
