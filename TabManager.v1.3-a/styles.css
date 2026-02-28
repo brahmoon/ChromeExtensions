@@ -149,6 +149,34 @@ header.is-compact {
   outline: none;
 }
 
+
+body.expanded-view-enabled header {
+  justify-content: center;
+}
+
+body.expanded-view-enabled .header-left {
+  margin-left: 0;
+  width: 100%;
+  justify-content: center;
+}
+
+body.expanded-view-enabled .header-actions {
+  width: 100%;
+  justify-content: center;
+  position: relative;
+}
+
+body.expanded-view-enabled #history-toggle-btn {
+  display: none;
+}
+
+body.expanded-view-enabled .header-icon-button--close {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
 #domain-group-menu {
   position: absolute;
   left: 50%;

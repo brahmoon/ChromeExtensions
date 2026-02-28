@@ -236,6 +236,10 @@ function updateExpandedViewUI() {
     expandedView.hidden = !expandedViewEnabled;
   }
 
+  if (document.body) {
+    document.body.classList.toggle('expanded-view-enabled', expandedViewEnabled);
+  }
+
   postToParentMessage('TabManagerExpandedViewChanged', {
     expanded: expandedViewEnabled,
   });
@@ -2941,6 +2945,16 @@ function matchesSearch(tab) {
   return title.includes(searchQuery);
 }
 
+function matchesAudioFilter(tab) {
+  if (!audioFilterEnabled) {
+    return true;
+  }
+
+  const isAudible = Boolean(tab?.audible);
+  const isMuted = Boolean(tab?.mutedInfo && tab.mutedInfo.muted);
+  return isAudible || isMuted;
+}
+
 function setupSearchControls() {
   const input = getSearchInput();
   if (!input) {
@@ -3239,7 +3253,14 @@ async function refreshTabs() {
 
     for (const win of orderedWindows) {
       const windowTabs = Array.isArray(win?.tabs) ? win.tabs : [];
-      const searchableTabs = windowTabs.filter((tab) => matchesSearch(tab));
+      for (const tab of windowTabs) {
+        if (Number.isFinite(tab?.id)) {
+          allOpenTabIds.add(Math.trunc(tab.id));
+        }
+      }
+
+      const audioFilteredTabs = windowTabs.filter((tab) => matchesAudioFilter(tab));
+      const searchableTabs = audioFilteredTabs.filter((tab) => matchesSearch(tab));
       const { groupMap, structure } = buildTabStructureFromTabs(searchableTabs);
 
       try {
@@ -3317,13 +3338,7 @@ async function refreshTabs() {
   lastKnownOpenTabIds = openTabIds;
   pruneActivationHistory(openTabIds);
 
-  const filteredTabs = audioFilterEnabled
-    ? tabs.filter((tab) => {
-        const isAudible = Boolean(tab?.audible);
-        const isMuted = Boolean(tab?.mutedInfo && tab.mutedInfo.muted);
-        return isAudible || isMuted;
-      })
-    : tabs.slice();
+  const filteredTabs = tabs.filter((tab) => matchesAudioFilter(tab));
 
   const searchFilteredTabs = filteredTabs.filter((tab) => matchesSearch(tab));
 
