@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Twitch Emote Bar</title>
+  <style>
+    :root {
+      --bg: #0e0c15;
+      --surface: #1a1625;
+      --surface2: #231e32;
+      --surface3: #2c2640;
+      --border: #2e2845;
+      --accent: #9147ff;
+      --accent2: #bf93ff;
+      --accent-dim: rgba(145,71,255,0.15);
+      --text: #efebff;
+      --text-dim: #8b82a8;
+      --text-muted: #5a5278;
+      --drag-over: rgba(145,71,255,0.2);
+      --section-drag-over: rgba(145,71,255,0.12);
+      --user-section: #1e2a1a;
+      --user-border: #2d4a28;
+      --user-accent: #4caf50;
+      --user-accent2: #81c784;
+      --emote-size: 44px;
+      --r: 7px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100vh; background: var(--bg); color: var(--text);
+      font-family: 'Segoe UI','Noto Sans JP',sans-serif; overflow: hidden; display: flex; flex-direction: column; }
+
+    /* Header */
+    .header { display: flex; align-items: center; justify-content: space-between;
+      padding: 9px 12px 8px; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .header-left { display: flex; align-items: center; gap: 8px; }
+    .header-icon { width: 20px; height: 20px; background: var(--accent); border-radius: 50%;
+      display: flex; align-items: center; justify-content: center; font-size: 11px; }
+    .header-title { font-size: 13px; font-weight: 700; letter-spacing: .03em; }
+    .header-right { display: flex; align-items: center; gap: 5px; }
+    .emote-count { font-size: 11px; color: var(--text-dim); background: var(--surface2);
+      padding: 2px 8px; border-radius: 99px; border: 1px solid var(--border); }
+    .btn-icon { background: transparent; border: none; color: var(--text-dim); cursor: pointer;
+      width: 26px; height: 26px; border-radius: 5px; display: flex; align-items: center; justify-content: center;
+      font-size: 14px; transition: background .15s, color .15s; }
+    .btn-icon:hover { background: var(--surface2); color: var(--text); }
+
+    /* Search */
+    .search-wrap { padding: 7px 11px; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .search-input { width: 100%; background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--r); color: var(--text); font-size: 12px; padding: 5px 10px; outline: none; transition: border-color .15s; }
+    .search-input:focus { border-color: var(--accent); }
+    .search-input::placeholder { color: var(--text-muted); }
+
+    /* Toolbar */
+    .toolbar { display: flex; align-items: center; gap: 6px; padding: 5px 11px;
+      border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg); }
+    .toolbar-spacer { flex: 1; }
+    .btn-sm { background: var(--surface2); border: 1px solid var(--border); border-radius: 5px;
+      color: var(--text-dim); font-size: 11px; padding: 3px 9px; cursor: pointer; white-space: nowrap;
+      transition: background .15s, color .15s, border-color .15s; }
+    .btn-sm:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn-sm.user { background: var(--user-section); border-color: var(--user-border); color: var(--user-accent2); }
+    .btn-sm.user:hover { background: var(--user-accent); border-color: var(--user-accent); color: #fff; }
+    .size-control { display: flex; align-items: center; gap: 5px; }
+    .size-label { font-size: 10px; color: var(--text-muted); }
+    .size-slider { -webkit-appearance: none; appearance: none; width: 64px; height: 3px;
+      border-radius: 99px; background: var(--border); outline: none; }
+    .size-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px;
+      border-radius: 50%; background: var(--accent); cursor: pointer; }
+
+    /* Scroll area */
+    .emote-scroll { flex: 1; overflow-y: auto; padding: 8px 10px 12px; }
+    .emote-scroll::-webkit-scrollbar { width: 4px; }
+    .emote-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+
+    /* Section */
+    .section { margin-bottom: 12px; border-radius: var(--r); transition: opacity .15s; }
+    .section.section-dragging { opacity: .4; }
+    .section.section-drag-target { outline: 2px dashed var(--accent); outline-offset: 2px;
+      background: var(--section-drag-over); }
+
+    .section-header { display: flex; align-items: center; gap: 7px; padding: 5px 6px;
+      border-radius: var(--r); cursor: pointer; user-select: none;
+      transition: background .12s; }
+    .section-header:hover { background: var(--surface2); }
+    .section-header.draggable-header { cursor: grab; }
+    .section-header.draggable-header:active { cursor: grabbing; }
+
+    .section-toggle { font-size: 10px; color: var(--text-muted); width: 14px; flex-shrink: 0;
+      transition: transform .18s; display: inline-block; }
+    .section.collapsed .section-toggle { transform: rotate(-90deg); }
+
+    .section-avatar { width: 20px; height: 20px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+    .section-avatar-placeholder { width: 20px; height: 20px; border-radius: 50%; background: var(--user-accent);
+      display: flex; align-items: center; justify-content: center; font-size: 11px; flex-shrink: 0; }
+    .section-name { font-size: 12px; font-weight: 700; color: var(--text-dim); flex: 1;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .section.user-section .section-name { color: var(--user-accent2); }
+    .section-count { font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
+    .section-actions { display: flex; gap: 3px; flex-shrink: 0; }
+    .section-btn { background: transparent; border: none; color: var(--text-muted); cursor: pointer;
+      font-size: 11px; padding: 2px 5px; border-radius: 4px; transition: background .12s, color .12s; }
+    .section-btn:hover { background: var(--surface2); color: var(--text-dim); }
+    .section-btn.danger:hover { background: rgba(244,67,54,.15); color: #f44336; }
+
+    /* Grid wrapper — collapsed で非表示 */
+    .section-body { overflow: hidden; transition: max-height .2s ease; max-height: 2000px; }
+    .section.collapsed .section-body { max-height: 0; }
+
+    /* Emote Grid */
+    .emote-grid { display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(calc(var(--emote-size) + 14px), 1fr));
+      gap: 5px; padding: 4px 2px 6px; }
+
+    /* Emote Cell */
+    .emote-cell { position: relative; cursor: grab; border-radius: var(--r); border: 1.5px solid transparent;
+      background: var(--surface); transition: border-color .12s, background .12s, transform .1s;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 3px; padding: 6px 4px 4px; user-select: none; aspect-ratio: 1; }
+    .emote-cell:hover { border-color: var(--accent); background: var(--surface2); transform: scale(1.06); z-index: 2; }
+    .emote-cell:active { cursor: grabbing; transform: scale(.96); }
+    .emote-cell.dragging { opacity: .35; border-color: var(--accent2); }
+    .emote-cell.drag-over { background: var(--drag-over); border-color: var(--accent); border-style: dashed; }
+    .emote-cell img { width: var(--emote-size); height: var(--emote-size); object-fit: contain;
+      pointer-events: none; image-rendering: auto; }
+    .emote-label { font-size: 9px; color: var(--text-muted); max-width: 100%; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; text-align: center; }
+    .emote-cell:hover .emote-label { color: var(--text-dim); }
+    .emote-cell.inserted { animation: flash .35s ease; }
+    @keyframes flash { 0% { background: rgba(145,71,255,.5); border-color: var(--accent); } 100% { background: var(--surface); } }
+
+    /* Tooltip */
+    .emote-cell::after { content: attr(data-emote-id); position: absolute; bottom: calc(100% + 4px);
+      left: 50%; transform: translateX(-50%); background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); font-size: 11px; padding: 3px 7px; border-radius: 4px; white-space: nowrap;
+      pointer-events: none; opacity: 0; transition: opacity .12s; z-index: 200; }
+    .emote-cell:hover::after { opacity: 1; }
+
+    /* User section emote border */
+    .section.user-section .emote-cell { border-color: rgba(76,175,80,.12); }
+    .section.user-section .emote-cell:hover { border-color: var(--user-accent); background: var(--user-section); }
+
+    /* ===== Locked emote overlay ===== */
+    .emote-cell.locked { cursor: default; }
+    .emote-cell.locked img { opacity: 0.35; filter: grayscale(60%); }
+    .emote-cell.locked:hover { border-color: var(--border); background: var(--surface); transform: none; }
+    .emote-cell.locked::after { display: none; } /* tooltipは出さない */
+    .lock-overlay {
+      position: absolute; inset: 0; border-radius: var(--r);
+      background: rgba(10,8,20,0.45);
+      pointer-events: none;
+    }
+    .lock-icon {
+      position: absolute; bottom: 3px; right: 3px;
+      width: 13px; height: 13px; pointer-events: none; opacity: 0.75;
+    }
+    .lock-icon svg { width: 100%; height: 100%; display: block; }
+
+    /* Context Menu */
+    .ctx-menu { position: fixed; background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 4px 0; z-index: 9999; min-width: 160px; box-shadow: 0 4px 20px rgba(0,0,0,.4); }
+    .ctx-menu-item { padding: 7px 14px; font-size: 12px; color: var(--text-dim); cursor: pointer;
+      display: flex; align-items: center; gap: 8px; transition: background .1s; }
+    .ctx-menu-item:hover { background: var(--surface3); color: var(--text); }
+    .ctx-menu-separator { height: 1px; background: var(--border); margin: 3px 0; }
+    .ctx-menu-item.user { color: var(--user-accent2); }
+    .ctx-menu-item.user:hover { background: rgba(76,175,80,.1); }
+    .ctx-menu-item.danger { color: #f88; }
+    .ctx-menu-item.danger:hover { background: rgba(244,67,54,.1); }
+    .ctx-submenu-label { font-size: 10px; color: var(--text-muted); padding: 4px 14px 2px;
+      text-transform: uppercase; letter-spacing: .06em; }
+
+    /* Modal */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 10000;
+      display: flex; align-items: center; justify-content: center; }
+    .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      padding: 18px; min-width: 260px; max-width: 320px; }
+    .modal-title { font-size: 14px; font-weight: 700; margin-bottom: 12px; }
+    .modal-input { width: 100%; background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--r); color: var(--text); font-size: 13px; padding: 7px 10px; outline: none;
+      margin-bottom: 12px; transition: border-color .15s; }
+    .modal-input:focus { border-color: var(--accent); }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .modal-btn { border: none; border-radius: 5px; padding: 6px 14px; font-size: 12px; cursor: pointer; }
+    .modal-btn.primary { background: var(--accent); color: #fff; }
+    .modal-btn.primary:hover { background: #772ce8; }
+    .modal-btn.secondary { background: var(--surface2); color: var(--text-dim); border: 1px solid var(--border); }
+    .modal-btn.secondary:hover { background: var(--surface3); color: var(--text); }
+
+    /* State message */
+    .state-message { display: flex; flex-direction: column; align-items: center; justify-content: center;
+      height: 200px; gap: 10px; color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px; }
+    .state-icon { font-size: 32px; opacity: .5; }
+
+    /* Pulse dot */
+    .pulse-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity: .3; } 50% { opacity: 1; } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <div class="header-icon">✦</div>
+      <span class="header-title">Emote Bar</span>
+      <div class="pulse-dot" title="エモートピッカーを開くと自動取得"></div>
+    </div>
+    <div class="header-right">
+      <span class="emote-count" id="emoteCount">0 エモート</span>
+      <button class="btn-icon" id="closeBtn" title="閉じる">✕</button>
+    </div>
+  </div>
+
+  <div class="search-wrap">
+    <input class="search-input" id="searchInput" type="text" placeholder="エモートを検索…" autocomplete="off">
+  </div>
+
+  <div class="toolbar">
+    <div class="size-control">
+      <span class="size-label">サイズ</span>
+      <input class="size-slider" id="sizeSlider" type="range" min="32" max="72" value="44">
+    </div>
+    <div class="toolbar-spacer"></div>
+    <button class="btn-sm user" id="addSectionBtn">＋ セクション追加</button>
+  </div>
+
+  <div class="emote-scroll" id="emoteScroll">
+    <div class="state-message" id="stateMessage">
+      <div class="state-icon">😊</div>
+      <p>Twitchのエモートピッカーを開くと<br>セクション別にエモートが取得されます。</p>
+    </div>
+    <div id="sectionsContainer"></div>
+  </div>
+
+  <div class="ctx-menu" id="ctxMenu" style="display:none"></div>
+
+  <div class="modal-overlay" id="modalOverlay" style="display:none">
+    <div class="modal">
+      <div class="modal-title" id="modalTitle">セクション名</div>
+      <input class="modal-input" id="modalInput" type="text" placeholder="セクション名を入力">
+      <div class="modal-actions">
+        <button class="modal-btn secondary" id="modalCancel">キャンセル</button>
+        <button class="modal-btn primary" id="modalOk">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
