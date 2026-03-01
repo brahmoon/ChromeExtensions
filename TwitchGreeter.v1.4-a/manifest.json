@@ -22,7 +22,8 @@
   "content_scripts": [
     {
       "matches": [
-        "*://*.twitch.tv/*"
+        "*://*.twitch.tv/*",
+        "https://dashboard.twitch.tv/u/*/*"
       ],
       "js": [
         "content.js"
