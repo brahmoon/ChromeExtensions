@@ -3381,6 +3381,11 @@ function setupWorkspaceGroupDropZones(grid) {
       return;
     }
 
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'move';
+    }
+
     const target = event.target;
     if (!(target instanceof Element)) {
       return;
@@ -3390,8 +3395,6 @@ function setupWorkspaceGroupDropZones(grid) {
     if (!(targetGroupSection instanceof HTMLElement) || targetGroupSection === workspaceDraggingGroupSection) {
       return;
     }
-
-    event.preventDefault();
 
     const rect = targetGroupSection.getBoundingClientRect();
     const placeBefore = event.clientY < rect.top + rect.height / 2;
