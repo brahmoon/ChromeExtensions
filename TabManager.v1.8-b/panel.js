@@ -112,6 +112,7 @@ let workspaceViewOpen = false;
 let workspaceTextMeasureRaf = null;
 let workspaceDraggingCard = null;
 let workspaceDraggingGroupSection = null;
+let workspaceSuppressGroupHeaderClickUntil = 0;
 let workspaceGroups = loadWorkspaceGroupsFromStorage();
 let workspaceGroupExpansionState = loadWorkspaceGroupExpansionState();
 
@@ -3271,6 +3272,7 @@ function createWorkspaceGroupSection(group, items) {
 
   const header = document.createElement('button');
   header.type = 'button';
+  header.draggable = true;
   header.className = 'workspace-group__header';
   const expanded = workspaceGroupExpansionState[group.id] !== false;
   header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
@@ -3301,6 +3303,10 @@ function createWorkspaceGroupSection(group, items) {
   body.appendChild(list);
 
   header.addEventListener('click', () => {
+    if (Date.now() < workspaceSuppressGroupHeaderClickUntil) {
+      return;
+    }
+
     const isExpanded = header.getAttribute('aria-expanded') === 'true';
     const next = !isExpanded;
     header.setAttribute('aria-expanded', next ? 'true' : 'false');
@@ -3367,7 +3373,10 @@ function setupWorkspaceGroupDropZones(grid) {
       return;
     }
 
-    workspaceDraggingGroupSection = groupSection;
+    workspaceDraggingGroupSection = {
+      section: groupSection,
+      moved: false,
+    };
     groupSection.classList.add('workspace-group--dragging');
 
     if (event.dataTransfer) {
@@ -3377,7 +3386,8 @@ function setupWorkspaceGroupDropZones(grid) {
   });
 
   grid.addEventListener('dragover', (event) => {
-    if (!workspaceDraggingGroupSection) {
+    const draggingState = workspaceDraggingGroupSection;
+    if (!draggingState || !(draggingState.section instanceof HTMLElement)) {
       return;
     }
 
@@ -3392,38 +3402,49 @@ function setupWorkspaceGroupDropZones(grid) {
     }
 
     const targetGroupSection = target.closest('.workspace-group');
-    if (!(targetGroupSection instanceof HTMLElement) || targetGroupSection === workspaceDraggingGroupSection) {
+    if (!(targetGroupSection instanceof HTMLElement) || targetGroupSection === draggingState.section) {
       return;
     }
 
     const rect = targetGroupSection.getBoundingClientRect();
     const placeBefore = event.clientY < rect.top + rect.height / 2;
     if (placeBefore) {
-      grid.insertBefore(workspaceDraggingGroupSection, targetGroupSection);
+      grid.insertBefore(draggingState.section, targetGroupSection);
     } else {
-      grid.insertBefore(workspaceDraggingGroupSection, targetGroupSection.nextSibling);
+      grid.insertBefore(draggingState.section, targetGroupSection.nextSibling);
     }
+    draggingState.moved = true;
   });
 
   grid.addEventListener('drop', async (event) => {
-    if (!workspaceDraggingGroupSection) {
+    const draggingState = workspaceDraggingGroupSection;
+    if (!draggingState) {
       return;
     }
 
     event.preventDefault();
+    if (draggingState.moved) {
+      workspaceSuppressGroupHeaderClickUntil = Date.now() + 250;
+    }
     reorderWorkspaceGroupsByDom(grid);
     await renderWorkspaceView();
   });
 
   grid.addEventListener('dragend', () => {
-    if (!workspaceDraggingGroupSection) {
+    const draggingState = workspaceDraggingGroupSection;
+    if (!draggingState || !(draggingState.section instanceof HTMLElement)) {
+      workspaceDraggingGroupSection = null;
       return;
     }
 
-    workspaceDraggingGroupSection.classList.remove('workspace-group--dragging');
+    draggingState.section.classList.remove('workspace-group--dragging');
+    if (draggingState.moved) {
+      workspaceSuppressGroupHeaderClickUntil = Date.now() + 250;
+    }
     workspaceDraggingGroupSection = null;
   });
 }
+
 
 async function renderWorkspaceView() {
   const grid = getWorkspaceGrid();
