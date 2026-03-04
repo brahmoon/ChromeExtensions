@@ -4432,13 +4432,23 @@ function setupTabGroupDragAndDrop(root) {
     tabPanelDraggingGroupState = null;
   });
 }
+function clearTabDropIndicators(root) {
+  root.querySelectorAll('.tab-item--drop-before, .tab-item--drop-after').forEach((el) => {
+    el.classList.remove('tab-item--drop-before', 'tab-item--drop-after');
+  });
+}
+
 async function setupTabDragAndDrop(root) {
   if (!root || root.dataset.tabDragDropBound === 'true') {
     return;
   }
   root.dataset.tabDragDropBound = 'true';
 
+  // { tab, source: HTMLElement } | null
   let dragging = null;
+
+  // dragover が記録し drop が読む。{ targetTabItem: HTMLElement, dropBefore: boolean } | null
+  let pendingTabDropTarget = null;
 
   root.addEventListener('dragstart', (event) => {
     const tabItem = event.target instanceof Element ? event.target.closest('.tab-item') : null;
@@ -4451,6 +4461,7 @@ async function setupTabDragAndDrop(root) {
       return;
     }
 
+    pendingTabDropTarget = null;
     dragging = { tab: metadata.tab, source: tabItem };
     tabItem.classList.add('tab-item--dragging');
 
@@ -4466,24 +4477,55 @@ async function setupTabDragAndDrop(root) {
     }
 
     const targetTab = event.target instanceof Element ? event.target.closest('.tab-item') : null;
-    if (!targetTab) {
+    if (!(targetTab instanceof HTMLElement) || targetTab === dragging.source) {
+      // ドロップ先候補なし → インジケーターをクリア
+      // preventDefault() を呼ばないことで drop を発火させない（HTML DnD 仕様）
+      clearTabDropIndicators(root);
+      pendingTabDropTarget = null;
       return;
     }
 
     event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'move';
+    }
+
+    // ターゲット要素の上半分／下半分でドロップ位置（挿入線の位置）を判定
+    const rect = targetTab.getBoundingClientRect();
+    const dropBefore = event.clientY < rect.top + rect.height / 2;
+
+    // インジケーターを更新
+    clearTabDropIndicators(root);
+    targetTab.classList.add(dropBefore ? 'tab-item--drop-before' : 'tab-item--drop-after');
+
+    // ドロップ先を記録（DOM 操作は行わない）
+    pendingTabDropTarget = { targetTabItem: targetTab, dropBefore };
+  });
+
+  root.addEventListener('dragleave', (event) => {
+    // root の外にカーソルが出た場合のみインジケーターをクリア
+    if (!(event.relatedTarget instanceof Node) || !root.contains(event.relatedTarget)) {
+      clearTabDropIndicators(root);
+      pendingTabDropTarget = null;
+    }
   });
 
   root.addEventListener('drop', async (event) => {
+    clearTabDropIndicators(root);
+
     if (!dragging) {
+      pendingTabDropTarget = null;
       return;
     }
 
-    const targetTab = event.target instanceof Element ? event.target.closest('.tab-item') : null;
-    if (!(targetTab instanceof HTMLElement)) {
+    const pending = pendingTabDropTarget;
+    pendingTabDropTarget = null;
+
+    if (!pending || !(pending.targetTabItem instanceof HTMLElement)) {
       return;
     }
 
-    const targetMeta = tabMetadataMap.get(targetTab);
+    const targetMeta = tabMetadataMap.get(pending.targetTabItem);
     if (!targetMeta || !targetMeta.tab || !Number.isFinite(targetMeta.tab.index)) {
       return;
     }
@@ -4495,11 +4537,8 @@ async function setupTabDragAndDrop(root) {
 
     event.preventDefault();
 
-    const rect = targetTab.getBoundingClientRect();
-    const dropBefore = event.clientY < rect.top + rect.height / 2;
     let targetIndex = targetMeta.tab.index;
-
-    if (!dropBefore) {
+    if (!pending.dropBefore) {
       targetIndex += 1;
     }
 
@@ -4521,6 +4560,8 @@ async function setupTabDragAndDrop(root) {
 
   root.addEventListener('dragend', () => {
     dragging?.source?.classList.remove('tab-item--dragging');
+    clearTabDropIndicators(root);
+    pendingTabDropTarget = null;
     dragging = null;
   });
 }
@@ -4771,6 +4812,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       box-shadow: 0 -2px 0 0 var(--theme-color, #8ab4f8);
     }
     .group-item--drop-after {
+      box-shadow: 0 2px 0 0 var(--theme-color, #8ab4f8);
+    }
+    .tab-item--drop-before {
+      box-shadow: 0 -2px 0 0 var(--theme-color, #8ab4f8);
+    }
+    .tab-item--drop-after {
       box-shadow: 0 2px 0 0 var(--theme-color, #8ab4f8);
     }
   `;
