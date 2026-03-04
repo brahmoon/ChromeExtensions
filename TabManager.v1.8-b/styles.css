@@ -1023,6 +1023,10 @@ body.expanded-view-enabled #workspace-view .workspace-ungrouped-list .workspace-
   box-sizing: border-box;
 }
 
+.workspace-group--dragging {
+  opacity: 0.55;
+}
+
 .workspace-group__header {
   width: 100%;
   border: 0;
@@ -1032,9 +1036,12 @@ body.expanded-view-enabled #workspace-view .workspace-ungrouped-list .workspace-
   padding: 8px 10px;
   color: var(--tm-text-primary);
   background: var(--tm-header-bg);
-  cursor: pointer;
+  cursor: grab;
 }
 
+.workspace-group__header:active {
+  cursor: grabbing;
+}
 .workspace-group__header::before {
   content: '▾';
   margin-right: 8px;
