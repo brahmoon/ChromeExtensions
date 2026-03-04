@@ -494,6 +494,10 @@ body.expanded-view-enabled .header-icon-button--close {
   border-bottom: 1px solid var(--tm-divider);
 }
 
+.group-item--dragging {
+  opacity: 0.55;
+}
+
 .group-header {
   width: 100%;
   background: none;
@@ -503,12 +507,15 @@ body.expanded-view-enabled .header-icon-button--close {
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  cursor: pointer;
+  cursor: grab;
   font-size: 14px;
   text-align: left;
   transition: background 0.2s ease;
 }
 
+.group-header:active {
+  cursor: grabbing;
+}
 .group-header:hover,
 .group-header:focus-visible {
   outline: none;
