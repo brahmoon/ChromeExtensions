@@ -3275,6 +3275,7 @@ function createWorkspaceGroupSection(group, items) {
   const section = document.createElement('section');
   section.className = 'workspace-group';
   section.dataset.groupId = group.id;
+  section.draggable = true;
 
   const header = document.createElement('button');
   header.type = 'button';
