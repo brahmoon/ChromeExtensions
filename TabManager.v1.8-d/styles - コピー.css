@@ -32,8 +32,7 @@ body {
   background-color: var(--tm-bg);
   color: var(--tm-text-primary);
   height: 100%;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: auto;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -51,7 +50,6 @@ header {
   padding: 8px 10px;
   border-bottom: 1px solid var(--tm-border);
   transition: padding 0.25s ease, box-shadow 0.25s ease;
-  box-sizing: border-box;
 }
 
 .panel-shell {
@@ -87,8 +85,6 @@ header.is-compact {
 .header-search {
   display: flex;
   align-items: center;
-  min-width: 0;
-  flex: 1 1 auto;
 }
 
 .header-search input {
@@ -98,8 +94,7 @@ header.is-compact {
   border-radius: 999px;
   padding: 6px 12px;
   font-size: 13px;
-  min-width: 0;
-  width: 100%;
+  min-width: 160px;
 }
 
 .header-search input::placeholder {
@@ -244,8 +239,6 @@ body.expanded-view-enabled .header-icon-button--close {
   display: flex;
   flex-direction: column;
   padding: 0 10px 10px;
-  box-sizing: border-box;
-  overflow-x: hidden;
 }
 
 .panel-view {
