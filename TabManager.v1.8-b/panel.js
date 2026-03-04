@@ -111,6 +111,7 @@ let contextMenuState = {
 let workspaceViewOpen = false;
 let workspaceTextMeasureRaf = null;
 let workspaceDraggingCard = null;
+let workspaceDraggingGroupSection = null;
 let workspaceGroups = loadWorkspaceGroupsFromStorage();
 let workspaceGroupExpansionState = loadWorkspaceGroupExpansionState();
 
@@ -683,6 +684,13 @@ function handlePanelContextMenu(event) {
   }
 
   if (workspaceViewOpen) {
+    const workspaceGroupContext = resolveWorkspaceGroupContext(event.target);
+    if (workspaceGroupContext) {
+      event.stopPropagation();
+      showWorkspaceGroupContextMenu(event, workspaceGroupContext);
+      return;
+    }
+
     showContextMenu({
       type: 'workspace',
       x: event.clientX,
@@ -701,6 +709,67 @@ function handlePanelContextMenu(event) {
       }],
     });
   }
+}
+
+function resolveWorkspaceGroupContext(target) {
+  if (!workspaceViewOpen || !(target instanceof Element)) {
+    return null;
+  }
+
+  const section = target.closest('.workspace-group');
+  if (!(section instanceof HTMLElement)) {
+    return null;
+  }
+
+  const groupId = section.dataset.groupId;
+  if (typeof groupId !== 'string' || groupId.length === 0) {
+    return null;
+  }
+
+  const group = workspaceGroups.find((item) => item.id === groupId);
+  if (!group) {
+    return null;
+  }
+
+  return { section, group };
+}
+
+function showWorkspaceGroupContextMenu(event, context) {
+  const { section, group } = context;
+  showContextMenu({
+    type: 'workspace-group',
+    targetElement: section,
+    x: event.clientX,
+    y: event.clientY,
+    items: [
+      {
+        label: 'グループ名を編集',
+        onSelect: () => editWorkspaceGroupName(group.id),
+      },
+    ],
+  });
+}
+
+function editWorkspaceGroupName(groupId) {
+  const group = workspaceGroups.find((item) => item.id === groupId);
+  if (!group) {
+    return;
+  }
+
+  const nextName = window.prompt('グループ名を編集してください', group.name);
+  if (nextName == null) {
+    return;
+  }
+
+  const resolvedName = nextName.trim() || '新規グループ';
+  workspaceGroups = workspaceGroups.map((item) => {
+    if (item.id !== groupId) {
+      return item;
+    }
+    return { ...item, name: resolvedName };
+  });
+  persistWorkspaceGroupsToStorage();
+  renderWorkspaceView();
 }
 
 function handleContextMenuGlobalClick(event) {
@@ -3198,6 +3267,7 @@ function createWorkspaceGroupSection(group, items) {
   const section = document.createElement('section');
   section.className = 'workspace-group';
   section.dataset.groupId = group.id;
+  section.draggable = true;
 
   const header = document.createElement('button');
   header.type = 'button';
@@ -3242,6 +3312,114 @@ function createWorkspaceGroupSection(group, items) {
   section.appendChild(header);
   section.appendChild(body);
   return section;
+}
+
+function reorderWorkspaceGroupsByDom(grid) {
+  if (!grid) {
+    return;
+  }
+
+  const orderedIds = Array.from(grid.querySelectorAll('.workspace-group'))
+    .map((section) => section.dataset.groupId)
+    .filter((groupId) => typeof groupId === 'string' && groupId.length > 0);
+
+  if (orderedIds.length === 0) {
+    return;
+  }
+
+  const groupById = new Map(workspaceGroups.map((group) => [group.id, group]));
+  const nextGroups = orderedIds
+    .map((groupId) => groupById.get(groupId))
+    .filter((group) => Boolean(group));
+
+  if (nextGroups.length !== workspaceGroups.length) {
+    return;
+  }
+
+  const hasChanged = nextGroups.some((group, index) => group.id !== workspaceGroups[index]?.id);
+  if (!hasChanged) {
+    return;
+  }
+
+  workspaceGroups = nextGroups;
+  persistWorkspaceGroupsToStorage();
+}
+
+function setupWorkspaceGroupDropZones(grid) {
+  if (!grid || grid.dataset.groupDropBound === 'true') {
+    return;
+  }
+  grid.dataset.groupDropBound = 'true';
+
+  grid.addEventListener('dragstart', (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    const groupHeader = target.closest('.workspace-group__header');
+    if (!(groupHeader instanceof HTMLElement)) {
+      return;
+    }
+
+    const groupSection = groupHeader.closest('.workspace-group');
+    if (!(groupSection instanceof HTMLElement)) {
+      return;
+    }
+
+    workspaceDraggingGroupSection = groupSection;
+    groupSection.classList.add('workspace-group--dragging');
+
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/workspace-group-id', groupSection.dataset.groupId || '');
+    }
+  });
+
+  grid.addEventListener('dragover', (event) => {
+    if (!workspaceDraggingGroupSection) {
+      return;
+    }
+
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    const targetGroupSection = target.closest('.workspace-group');
+    if (!(targetGroupSection instanceof HTMLElement) || targetGroupSection === workspaceDraggingGroupSection) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const rect = targetGroupSection.getBoundingClientRect();
+    const placeBefore = event.clientY < rect.top + rect.height / 2;
+    if (placeBefore) {
+      grid.insertBefore(workspaceDraggingGroupSection, targetGroupSection);
+    } else {
+      grid.insertBefore(workspaceDraggingGroupSection, targetGroupSection.nextSibling);
+    }
+  });
+
+  grid.addEventListener('drop', async (event) => {
+    if (!workspaceDraggingGroupSection) {
+      return;
+    }
+
+    event.preventDefault();
+    reorderWorkspaceGroupsByDom(grid);
+    await renderWorkspaceView();
+  });
+
+  grid.addEventListener('dragend', () => {
+    if (!workspaceDraggingGroupSection) {
+      return;
+    }
+
+    workspaceDraggingGroupSection.classList.remove('workspace-group--dragging');
+    workspaceDraggingGroupSection = null;
+  });
 }
 
 async function renderWorkspaceView() {
