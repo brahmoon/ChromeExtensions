@@ -111,11 +111,7 @@ let contextMenuState = {
 let workspaceViewOpen = false;
 let workspaceTextMeasureRaf = null;
 let workspaceDraggingCard = null;
-let workspaceDraggingGroupSection = null;
-let workspaceSuppressGroupHeaderClickUntil = 0;
 let workspaceGroups = loadWorkspaceGroupsFromStorage();
-let tabPanelDraggingGroupState = null;
-let tabPanelSuppressGroupHeaderClickUntil = 0;
 let workspaceGroupExpansionState = loadWorkspaceGroupExpansionState();
 
 function getTabListElement() {
@@ -687,13 +683,6 @@ function handlePanelContextMenu(event) {
   }
 
   if (workspaceViewOpen) {
-    const workspaceGroupContext = resolveWorkspaceGroupContext(event.target);
-    if (workspaceGroupContext) {
-      event.stopPropagation();
-      showWorkspaceGroupContextMenu(event, workspaceGroupContext);
-      return;
-    }
-
     showContextMenu({
       type: 'workspace',
       x: event.clientX,
@@ -712,67 +701,6 @@ function handlePanelContextMenu(event) {
       }],
     });
   }
-}
-
-function resolveWorkspaceGroupContext(target) {
-  if (!workspaceViewOpen || !(target instanceof Element)) {
-    return null;
-  }
-
-  const section = target.closest('.workspace-group');
-  if (!(section instanceof HTMLElement)) {
-    return null;
-  }
-
-  const groupId = section.dataset.groupId;
-  if (typeof groupId !== 'string' || groupId.length === 0) {
-    return null;
-  }
-
-  const group = workspaceGroups.find((item) => item.id === groupId);
-  if (!group) {
-    return null;
-  }
-
-  return { section, group };
-}
-
-function showWorkspaceGroupContextMenu(event, context) {
-  const { section, group } = context;
-  showContextMenu({
-    type: 'workspace-group',
-    targetElement: section,
-    x: event.clientX,
-    y: event.clientY,
-    items: [
-      {
-        label: 'グループ名を編集',
-        onSelect: () => editWorkspaceGroupName(group.id),
-      },
-    ],
-  });
-}
-
-function editWorkspaceGroupName(groupId) {
-  const group = workspaceGroups.find((item) => item.id === groupId);
-  if (!group) {
-    return;
-  }
-
-  const nextName = window.prompt('グループ名を編集してください', group.name);
-  if (nextName == null) {
-    return;
-  }
-
-  const resolvedName = nextName.trim() || '新規グループ';
-  workspaceGroups = workspaceGroups.map((item) => {
-    if (item.id !== groupId) {
-      return item;
-    }
-    return { ...item, name: resolvedName };
-  });
-  persistWorkspaceGroupsToStorage();
-  renderWorkspaceView();
 }
 
 function handleContextMenuGlobalClick(event) {
@@ -2394,7 +2322,6 @@ function createGroupAccordion(groupId, groupInfo, tabs) {
 
   const headerButton = document.createElement('button');
   headerButton.type = 'button';
-  headerButton.draggable = true;
   headerButton.className = 'group-header';
   headerButton.setAttribute('aria-expanded', expandedInitial ? 'true' : 'false');
   headerButton.setAttribute('aria-controls', listId);
@@ -2418,10 +2345,6 @@ function createGroupAccordion(groupId, groupInfo, tabs) {
   headerButton.appendChild(count);
 
   headerButton.addEventListener('click', () => {
-    if (Date.now() < tabPanelSuppressGroupHeaderClickUntil) {
-      return;
-    }
-
     const expanded = headerButton.getAttribute('aria-expanded') === 'true';
     const nextExpanded = !expanded;
     headerButton.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
@@ -2906,6 +2829,12 @@ function handleKeydown(event) {
     return;
   }
 
+  // YouTube 埋め込みが展開中であれば最優先でサムネイルに戻す
+  if (activeYoutubeCardEl) {
+    handleYoutubeEmbedKeydown(event);
+    return;
+  }
+
   const preview = getWorkspaceImagePreviewElement();
   if (preview && !preview.hidden) {
     closeWorkspaceImagePreview();
@@ -3103,6 +3032,7 @@ function getWorkspaceGlobalItemIds(grid) {
 }
 
 function setupWorkspaceDragAndDrop(grid) {
+  setupWorkspaceGroupDragAndDrop(grid);
   if (!grid || grid.dataset.dragDropBound === 'true') {
     return;
   }
@@ -3213,6 +3143,40 @@ function setupWorkspaceDragAndDrop(grid) {
   });
 }
 
+let draggingGroupSection = null;
+function setupWorkspaceGroupDragAndDrop(grid) {
+  const sections = grid.querySelectorAll('.workspace-group');
+  sections.forEach((section) => {
+    const handle = section.querySelector('.workspace-group__drag-handle');
+    if (!handle) return;
+    handle.addEventListener('dragstart', (e) => {
+      draggingGroupSection = section;
+      section.classList.add('workspace-group--dragging');
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', section.dataset.groupId || ''); }
+      e.stopPropagation();
+    });
+    handle.addEventListener('dragend', () => {
+      if (draggingGroupSection) draggingGroupSection.classList.remove('workspace-group--dragging');
+      grid.querySelectorAll('.workspace-group').forEach((s) => s.classList.remove('workspace-group--drop-target'));
+      draggingGroupSection = null;
+      const newOrder = Array.from(grid.querySelectorAll('.workspace-group')).map((s) => s.dataset.groupId).filter(Boolean);
+      workspaceGroups = newOrder.map((id) => workspaceGroups.find((g) => g.id === id)).filter(Boolean);
+      persistWorkspaceGroupsToStorage();
+    });
+    section.addEventListener('dragover', (e) => {
+      if (!draggingGroupSection || draggingGroupSection === section) return;
+      e.preventDefault(); e.stopPropagation();
+      section.classList.add('workspace-group--drop-target');
+      const rect = section.getBoundingClientRect();
+      const before = e.clientY < rect.top + rect.height / 2;
+      if (before) { grid.insertBefore(draggingGroupSection, section); }
+      else         { grid.insertBefore(draggingGroupSection, section.nextSibling); }
+    });
+    section.addEventListener('dragleave', () => section.classList.remove('workspace-group--drop-target'));
+    section.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); section.classList.remove('workspace-group--drop-target'); });
+  });
+}
+
 function applyWorkspaceViewState() {
   const tabView  = getTabView();
   const wsView   = getWorkspaceView();
@@ -3260,6 +3224,11 @@ function setupWorkspaceControls() {
     scheduleWorkspaceTextClampMeasurement();
   });
 
+  // YouTube 埋め込み: Esc キーで展開中の iframe を閉じる
+  window.addEventListener('keydown', handleYoutubeEmbedKeydown);
+  // YouTube 埋め込み: パネルアンロード時に音・通信を切断する
+  window.addEventListener('beforeunload', cleanupYoutubeEmbed);
+
   applyWorkspaceViewState();
 }
 
@@ -3275,11 +3244,17 @@ function createWorkspaceGroupSection(group, items) {
   const section = document.createElement('section');
   section.className = 'workspace-group';
   section.dataset.groupId = group.id;
-  section.draggable = true;
+
+    // グループ並び替え専用ドラッグハンドル
+  const dragHandle = document.createElement('span');
+  dragHandle.className = 'workspace-group__drag-handle';
+  dragHandle.title = 'ドラッグして並び替え';
+  dragHandle.setAttribute('aria-hidden', 'true');
+  dragHandle.draggable = true;
+  dragHandle.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M11 18c0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2 2 .9 2 2zm-2-8c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0-6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm6 4c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>';
 
   const header = document.createElement('button');
   header.type = 'button';
-  header.draggable = true;
   header.className = 'workspace-group__header';
   const expanded = workspaceGroupExpansionState[group.id] !== false;
   header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
@@ -3294,6 +3269,11 @@ function createWorkspaceGroupSection(group, items) {
 
   header.appendChild(title);
   header.appendChild(count);
+  const renameBtn = document.createElement("button");
+  renameBtn.type = "button"; renameBtn.className = "workspace-group__rename-btn"; renameBtn.title = "グループ名を変更";
+  renameBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>';
+  renameBtn.addEventListener("click", (e) => { e.stopPropagation(); beginWorkspaceGroupRename(section, group, title); });
+  header.appendChild(renameBtn);
 
   const body = document.createElement('div');
   body.className = 'workspace-group__body';
@@ -3310,10 +3290,6 @@ function createWorkspaceGroupSection(group, items) {
   body.appendChild(list);
 
   header.addEventListener('click', () => {
-    if (Date.now() < workspaceSuppressGroupHeaderClickUntil) {
-      return;
-    }
-
     const isExpanded = header.getAttribute('aria-expanded') === 'true';
     const next = !isExpanded;
     header.setAttribute('aria-expanded', next ? 'true' : 'false');
@@ -3322,136 +3298,12 @@ function createWorkspaceGroupSection(group, items) {
     persistWorkspaceGroupExpansionState();
   });
 
+  header.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); showContextMenu({ type: 'workspace-group', x: e.clientX, y: e.clientY, items: [{ label: 'グループ名を変更', onSelect: () => beginWorkspaceGroupRename(section, group, title) }, { label: 'グループを削除', onSelect: () => { workspaceGroups = workspaceGroups.filter((g) => g.id !== group.id); persistWorkspaceGroupsToStorage(); renderWorkspaceView(); } }] }); });
+  section.appendChild(dragHandle);
   section.appendChild(header);
   section.appendChild(body);
   return section;
 }
-
-function reorderWorkspaceGroupsByDom(grid) {
-  if (!grid) {
-    return;
-  }
-
-  const orderedIds = Array.from(grid.querySelectorAll('.workspace-group'))
-    .map((section) => section.dataset.groupId)
-    .filter((groupId) => typeof groupId === 'string' && groupId.length > 0);
-
-  if (orderedIds.length === 0) {
-    return;
-  }
-
-  const groupById = new Map(workspaceGroups.map((group) => [group.id, group]));
-  const nextGroups = orderedIds
-    .map((groupId) => groupById.get(groupId))
-    .filter((group) => Boolean(group));
-
-  if (nextGroups.length !== workspaceGroups.length) {
-    return;
-  }
-
-  const hasChanged = nextGroups.some((group, index) => group.id !== workspaceGroups[index]?.id);
-  if (!hasChanged) {
-    return;
-  }
-
-  workspaceGroups = nextGroups;
-  persistWorkspaceGroupsToStorage();
-}
-
-function setupWorkspaceGroupDropZones(grid) {
-  if (!grid || grid.dataset.groupDropBound === 'true') {
-    return;
-  }
-  grid.dataset.groupDropBound = 'true';
-
-  grid.addEventListener('dragstart', (event) => {
-    const target = event.target;
-    if (!(target instanceof Element)) {
-      return;
-    }
-
-    const groupHeader = target.closest('.workspace-group__header');
-    if (!(groupHeader instanceof HTMLElement)) {
-      return;
-    }
-
-    const groupSection = groupHeader.closest('.workspace-group');
-    if (!(groupSection instanceof HTMLElement)) {
-      return;
-    }
-
-    workspaceDraggingGroupSection = {
-      section: groupSection,
-      moved: false,
-    };
-    groupSection.classList.add('workspace-group--dragging');
-
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/workspace-group-id', groupSection.dataset.groupId || '');
-    }
-  });
-
-  grid.addEventListener('dragover', (event) => {
-    const draggingState = workspaceDraggingGroupSection;
-    if (!draggingState || !(draggingState.section instanceof HTMLElement)) {
-      return;
-    }
-
-    event.preventDefault();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = 'move';
-    }
-
-    const target = event.target;
-    if (!(target instanceof Element)) {
-      return;
-    }
-
-    const targetGroupSection = target.closest('.workspace-group');
-    if (!(targetGroupSection instanceof HTMLElement) || targetGroupSection === draggingState.section) {
-      return;
-    }
-
-    const rect = targetGroupSection.getBoundingClientRect();
-    const placeBefore = event.clientY < rect.top + rect.height / 2;
-    if (placeBefore) {
-      grid.insertBefore(draggingState.section, targetGroupSection);
-    } else {
-      grid.insertBefore(draggingState.section, targetGroupSection.nextSibling);
-    }
-    draggingState.moved = true;
-  });
-
-  grid.addEventListener('drop', async (event) => {
-    const draggingState = workspaceDraggingGroupSection;
-    if (!draggingState) {
-      return;
-    }
-
-    event.preventDefault();
-    if (draggingState.moved) {
-      workspaceSuppressGroupHeaderClickUntil = Date.now() + 250;
-    }
-    reorderWorkspaceGroupsByDom(grid);
-    await renderWorkspaceView();
-  });
-
-  grid.addEventListener('dragend', () => {
-    const draggingState = workspaceDraggingGroupSection;
-    if (!draggingState || !(draggingState.section instanceof HTMLElement)) {
-      workspaceDraggingGroupSection = null;
-      return;
-    }
-
-    draggingState.section.classList.remove('workspace-group--dragging');
-    if (draggingState.moved) {
-      workspaceSuppressGroupHeaderClickUntil = Date.now() + 250;
-    }
-    workspaceDraggingGroupSection = null;
-  });
-}
-
 
 async function renderWorkspaceView() {
   const grid = getWorkspaceGrid();
@@ -3513,7 +3365,6 @@ async function renderWorkspaceView() {
 
   grid.replaceChildren(fragment);
   setupWorkspaceDragAndDrop(grid);
-  setupWorkspaceGroupDropZones(grid);
   scheduleWorkspaceTextClampMeasurement();
 }
 
@@ -3561,30 +3412,38 @@ function createWorkspaceCard(item) {
 
   // ─ コンテンツ ─────────────────────────────────────────────────
   if (item.type === 'text' && item.text) {
-    const textWrap = document.createElement('div');
-    textWrap.className = 'workspace-card__text-wrap';
+    // YouTube URL 判定: テキスト全体が YouTube URL の場合は埋め込みカードに変換
+    const videoId = extractYoutubeVideoId(item.text);
+    if (videoId) {
+      const youtubeWrapper = createYoutubeEmbed(videoId, item.pageTitle);
+      card.appendChild(youtubeWrapper);
+      card.classList.add('workspace-card--youtube');
+    } else {
+      const textWrap = document.createElement('div');
+      textWrap.className = 'workspace-card__text-wrap';
 
-    const textEl       = document.createElement('p');
-    textEl.className   = 'workspace-card__text';
-    textEl.textContent = item.text;
+      const textEl       = document.createElement('p');
+      textEl.className   = 'workspace-card__text';
+      textEl.textContent = item.text;
 
-    const expandButton = document.createElement('button');
-    expandButton.type = 'button';
-    expandButton.hidden = true;
-    expandButton.className = 'workspace-card__text-expand';
-    expandButton.textContent = '続きを表示する';
-    expandButton.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const nextExpanded = !textEl.classList.contains('is-expanded');
-      textEl.classList.toggle('is-expanded', nextExpanded);
-      expandButton.textContent = nextExpanded ? '折りたたむ' : '続きを表示する';
-      scheduleWorkspaceTextClampMeasurement();
-    });
+      const expandButton = document.createElement('button');
+      expandButton.type = 'button';
+      expandButton.hidden = true;
+      expandButton.className = 'workspace-card__text-expand';
+      expandButton.textContent = '続きを表示する';
+      expandButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const nextExpanded = !textEl.classList.contains('is-expanded');
+        textEl.classList.toggle('is-expanded', nextExpanded);
+        expandButton.textContent = nextExpanded ? '折りたたむ' : '続きを表示する';
+        scheduleWorkspaceTextClampMeasurement();
+      });
 
-    textWrap.appendChild(textEl);
-    textWrap.appendChild(expandButton);
-    card.appendChild(textWrap);
+      textWrap.appendChild(textEl);
+      textWrap.appendChild(expandButton);
+      card.appendChild(textWrap);
+    }
   }
 
   if (item.type === 'image' && item.imageUrl) {
@@ -3660,34 +3519,95 @@ function createWorkspaceCard(item) {
   meta.appendChild(date);
   card.appendChild(meta);
 
-  // ─ 削除ボタン ────────────────────────────────────────────────
-  const del       = document.createElement('button');
-  del.className   = 'workspace-card__delete';
-  del.type        = 'button';
-  del.title       = '削除';
-  del.innerHTML   = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12z"/></svg>`;
+  // actions group
+  const actions = document.createElement('div');
+  actions.className = 'workspace-card__actions';
+  const isTextCard = item.type === 'text' && item.text && !extractYoutubeVideoId(item.text);
+  if (isTextCard) {
+    const editBtn = document.createElement('button');
+    editBtn.className = 'workspace-card__edit';
+    editBtn.type = 'button';
+    editBtn.title = '編集 (Ctrl+Enter で保存 / Esc でキャンセル)';
+    editBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>';
+    editBtn.addEventListener('click', (e) => { e.stopPropagation(); beginWorkspaceCardEdit(card, item); });
+    actions.appendChild(editBtn);
+  }
+  const del = document.createElement('button');
+  del.className = 'workspace-card__delete';
+  del.type = 'button';
+  del.title = '削除';
+  del.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12z"/></svg>';
   del.addEventListener('click', async (e) => {
     e.stopPropagation();
-    try {
-      await chrome.runtime.sendMessage({ type: 'WorkspaceDeleteItem', id: item.id });
-    } catch (err) {
-      console.error('Failed to delete workspace item:', err);
-    }
+    try { await chrome.runtime.sendMessage({ type: 'WorkspaceDeleteItem', id: item.id }); } catch(err) { console.error('Failed to delete workspace item:', err); }
     card.remove();
-    // グリッドが空になった場合に空状態テキストを表示
     const grid = getWorkspaceGrid();
     if (grid && grid.children.length === 0) {
-      const empty       = document.createElement('p');
-      empty.className   = 'workspace-empty';
+      const empty = document.createElement('p');
+      empty.className = 'workspace-empty';
       empty.textContent = '右クリック → 「ワークスペースに保存」で追加できます';
       grid.appendChild(empty);
     }
   });
-  card.appendChild(del);
-
+  actions.appendChild(del);
+  card.appendChild(actions);
+  if (isTextCard) {
+    card.addEventListener('contextmenu', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      showContextMenu({ type: 'workspace-card', x: e.clientX, y: e.clientY,
+        items: [
+          { label: '編集', onSelect: () => beginWorkspaceCardEdit(card, item) },
+          { label: '削除', onSelect: () => del.click() },
+        ],
+      });
+    });
+  }
   return card;
 }
 
+// Workspace card inline edit
+function beginWorkspaceCardEdit(card, item) {
+  if (card.classList.contains('workspace-card--editing')) return;
+  card.classList.add('workspace-card--editing');
+  const textWrap = card.querySelector('.workspace-card__text-wrap');
+  if (!textWrap) { card.classList.remove('workspace-card--editing'); return; }
+  const originalText = item.text;
+  const textarea = document.createElement('textarea');
+  textarea.className = 'workspace-card__textarea';
+  textarea.value = originalText;
+  textarea.rows = Math.min(Math.max(originalText.split('\n').length, 3), 12);
+  const btnRow = document.createElement('div');
+  btnRow.className = 'workspace-card__edit-actions';
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button'; saveBtn.className = 'workspace-card__edit-save'; saveBtn.textContent = '保存';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button'; cancelBtn.className = 'workspace-card__edit-cancel'; cancelBtn.textContent = 'キャンセル';
+  btnRow.appendChild(saveBtn); btnRow.appendChild(cancelBtn);
+  textWrap.hidden = true;
+  textWrap.after(btnRow); textWrap.after(textarea);
+  textarea.focus(); textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  const finishEdit = async (save) => {
+    card.classList.remove('workspace-card--editing');
+    textarea.remove(); btnRow.remove(); textWrap.hidden = false;
+    if (!save) return;
+    const newText = textarea.value;
+    if (newText === originalText) return;
+    const textEl = textWrap.querySelector('.workspace-card__text');
+    if (textEl) textEl.textContent = newText;
+    item.text = newText;
+    try { await chrome.runtime.sendMessage({ type: 'WorkspaceUpdateItemText', id: item.id, text: newText }); }
+    catch (err) { if (textEl) textEl.textContent = originalText; item.text = originalText; console.error('WorkspaceUpdateItemText failed:', err); }
+  };
+  saveBtn.addEventListener('click', () => finishEdit(true));
+  cancelBtn.addEventListener('click', () => finishEdit(false));
+  textarea.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); finishEdit(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finishEdit(false); }
+  });
+}
+}
+
+function beginWorkspaceGroupRename(section, group, titleEl) { if (section.classList.contains('workspace-group--renaming')) return; section.classList.add('workspace-group--renaming'); const originalName = group.name; const input = document.createElement('input'); input.type = 'text'; input.className = 'workspace-group__rename-input'; input.value = originalName; titleEl.replaceWith(input); input.focus(); input.select(); const finishRename = (save) => { section.classList.remove('workspace-group--renaming'); const newName = input.value.trim() || originalName; input.replaceWith(titleEl); if (save && newName !== originalName) { group.name = newName; titleEl.textContent = newName; const idx = workspaceGroups.findIndex((g) => g.id === group.id); if (idx >= 0) workspaceGroups[idx].name = newName; persistWorkspaceGroupsToStorage(); } }; input.addEventListener('blur', () => finishRename(true)); input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } if (e.key === 'Escape') { e.preventDefault(); input.value = originalName; input.blur(); } }); }
 function setupOptionsControls() {
   const button = getPropertyButton();
   if (button) {
@@ -4096,342 +4016,6 @@ function sortWindowsForExpandedView(windows, currentWindowId) {
 }
 
 
-
-
-// ─────────────────────────────────────────────────────────────────────────────
-// moveTabGroupByDragAndDrop
-//
-// 設計原則：「実行直前に真実を確認してから動かす」
-//
-//   1. windowId は dragstart 時に記録した固定値を sourceMeta.sourceWindowId から受け取る。
-//      dragover のスナップショット依存を完全に排除している。
-//
-//   2. chrome.tabs.query({ windowId }) でウィンドウ内の全タブを一括取得する。
-//      - ungrouped tab を含む絶対インデックスが正確に得られる。
-//      - sourceTabs / targetTabs が同一スナップショットから算出されるため不整合がない。
-//      - API 呼び出しが 1 回で済む。
-//
-//   3. sourceTabsBeforeTarget による前方補正。
-//      chrome.tabGroups.move() はソースを取り除いてから挿入するため、
-//      ソースが前方にある場合は取り除き後の前詰め分を補正する必要がある。
-//      sourceCount の単純減算ではなく targetIndex より前にある自タブ数を数えることで、
-//      インデックス不連続（他拡張干渉等）のケースにも安全に対応する。
-//
-//   4. 移動不要判定は targetIndex === sourceStart の点比較のみ。
-//      補正後 targetIndex がソース先頭と一致する場合のみ「現状維持」と判定してスキップする。
-//      範囲チェック（sourceStart <= idx <= sourceEnd）は「前方グループを隣接後方グループの
-//      上半分にドロップして入れ替える」正当な移動を誤ってブロックするため使用しない。
-//
-//   5. Race Condition 軽量ガード：targetIndex > allTabs.length なら末尾クランプ。
-//      ドラッグ中に別タブが閉じられても API がクラッシュしない。
-// ─────────────────────────────────────────────────────────────────────────────
-async function moveTabGroupByDragAndDrop(sourceMeta, targetMeta, dropBefore) {
-  if (!chrome?.tabGroups?.move) {
-    console.warn('chrome.tabGroups.move is not available');
-    return;
-  }
-
-  const sourceGroupId = Number.isFinite(sourceMeta?.groupId) ? sourceMeta.groupId : null;
-  const targetGroupId = Number.isFinite(targetMeta?.groupId) ? targetMeta.groupId : null;
-
-  // groupId < 0 は TAB_GROUP_ID_NONE（ungrouped）であるため除外する
-  if (
-    !Number.isFinite(sourceGroupId) || sourceGroupId < 0 ||
-    !Number.isFinite(targetGroupId) || targetGroupId < 0 ||
-    sourceGroupId === targetGroupId
-  ) {
-    return;
-  }
-
-  // dragstart 時に記録した windowId の固定値を使用する（スナップショット非依存）
-  const windowId = Number.isFinite(sourceMeta?.sourceWindowId)
-    ? sourceMeta.sourceWindowId
-    : null;
-  if (!Number.isFinite(windowId)) {
-    return;
-  }
-
-  // ウィンドウ内の全タブを一括取得
-  // ungrouped tab を含む絶対インデックスが得られ、かつ API 呼び出しが 1 回で済む
-  let allTabs;
-  try {
-    allTabs = await chrome.tabs.query({ windowId });
-  } catch (error) {
-    console.error('Failed to query all tabs for group move:', error);
-    return;
-  }
-
-  if (!Array.isArray(allTabs) || allTabs.length === 0) {
-    return;
-  }
-
-  const sourceTabs = allTabs.filter(
-    (t) => t.groupId === sourceGroupId && Number.isFinite(t.index)
-  );
-  const targetTabs = allTabs.filter(
-    (t) => t.groupId === targetGroupId && Number.isFinite(t.index)
-  );
-
-  if (sourceTabs.length === 0 || targetTabs.length === 0) {
-    return;
-  }
-
-  // drop 実行直前の windowId 最終確認
-  if (sourceTabs[0].windowId !== targetTabs[0].windowId) {
-    return;
-  }
-
-  // ソート済み配列を一度だけ生成（.sort() の破壊的呼び出しを防ぐ）
-  const sourceSorted = sourceTabs.slice().sort((a, b) => a.index - b.index);
-  const targetSorted = targetTabs.slice().sort((a, b) => a.index - b.index);
-
-  const sourceStart = sourceSorted[0].index;
-  const sourceEnd   = sourceSorted[sourceSorted.length - 1].index;
-
-  // dropBefore=true  → ターゲットグループの先頭タブの直前に配置
-  // dropBefore=false → ターゲットグループの末尾タブの直後に配置
-  let targetIndex = dropBefore
-    ? targetSorted[0].index
-    : targetSorted[targetSorted.length - 1].index + 1;
-
-  if (!Number.isFinite(targetIndex) || targetIndex < 0) {
-    return;
-  }
-
-  // 前方補正：ソースが前方にある場合、API がソースを取り除いた後の前詰め分を補正する。
-  // sourceCount の単純減算ではなく「targetIndex より前にある自タブ数」を正確にカウントする。
-  const sourceTabsBeforeTarget = sourceTabs.filter((t) => t.index < targetIndex).length;
-  targetIndex -= sourceTabsBeforeTarget;
-
-  if (targetIndex < 0) {
-    return;
-  }
-
-  // 移動不要判定：補正後 targetIndex がソース先頭と一致する場合のみスキップ。
-  // 移動後のソース位置は targetIndex～targetIndex+sourceCount-1 であり、
-  // 移動前（sourceStart～sourceEnd）と完全に一致するのは targetIndex===sourceStart のときだけ。
-  //
-  // 旧実装の範囲チェック（sourceStart <= targetIndex <= sourceEnd）は誤り。
-  // 「前方グループを隣接後方グループの上半分にドロップして入れ替える」操作では
-  // 補正後 targetIndex が恒等的に sourceStart と一致するため、正当な移動が誤ってブロックされていた。
-  if (targetIndex === sourceStart) {
-    return;
-  }
-
-  // Race Condition 軽量ガード：ドラッグ中に別タブが閉じられても末尾クランプで安全に処理する
-  if (targetIndex > allTabs.length) {
-    targetIndex = allTabs.length;
-  }
-
-  await chrome.tabGroups.move(sourceGroupId, { index: targetIndex });
-}
-
-
-// ─────────────────────────────────────────────────────────────────────────────
-// setupTabGroupDragAndDrop
-//
-// 設計原則：責務の完全分離
-//
-//   dragstart → 「起点」を固定値として記録（sourceWindowId を状態に保存）
-//               API コストゼロ・スナップショット依存なし
-//
-//   dragover  → 「意図」だけを記録（pendingDropTarget）
-//               DOM 操作なし・API 呼び出しなし
-//               windowId 検証は dragstart 固定値との比較のみ
-//               preventDefault() を呼ばないことで drop を発火させない（HTML DnD 仕様）
-//
-//   drop      → 「意図」を読んで moveTabGroupByDragAndDrop() に委譲
-//
-//   dragend   → すべての状態をクリーンアップ
-// ─────────────────────────────────────────────────────────────────────────────
-
-function clearGroupDropIndicators(root) {
-  root.querySelectorAll('.group-item--drop-before, .group-item--drop-after').forEach((el) => {
-    el.classList.remove('group-item--drop-before', 'group-item--drop-after');
-  });
-}
-
-function setupTabGroupDragAndDrop(root) {
-  if (!root || root.dataset.groupDragDropBound === 'true') {
-    return;
-  }
-  root.dataset.groupDragDropBound = 'true';
-
-  // 「どのグループのどちら側にドロップしようとしているか」を dragover が記録し drop が読む。
-  // { targetGroupItem: HTMLElement, dropBefore: boolean } | null
-  let pendingDropTarget = null;
-
-  root.addEventListener('dragstart', (event) => {
-    const target = event.target;
-    if (!(target instanceof Element)) {
-      return;
-    }
-
-    const groupHeader = target.closest('.group-header');
-    if (!(groupHeader instanceof HTMLElement)) {
-      return;
-    }
-
-    const groupItem = groupHeader.closest('.group-item');
-    if (!(groupItem instanceof HTMLElement)) {
-      return;
-    }
-
-    const metadata = groupMetadataMap.get(groupItem);
-    if (!metadata || !Number.isFinite(metadata.groupId)) {
-      return;
-    }
-
-    // sourceWindowId を dragstart 時点で固定値として保存する。
-    // dragover ではこの固定値を参照することで、毎フレームの API 呼び出しを不要にしつつ
-    // スナップショット（metadata.tabs）の経年劣化にも依存しない。
-    const sourceWindowId =
-      Array.isArray(metadata.tabs) && metadata.tabs.length > 0
-        ? (metadata.tabs[0]?.windowId ?? null)
-        : null;
-
-    pendingDropTarget = null;
-    tabPanelDraggingGroupState = {
-      source: groupItem,
-      metadata,
-      sourceWindowId,
-      moved: false,
-    };
-    groupItem.classList.add('group-item--dragging');
-
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/tab-group-id', String(metadata.groupId));
-    }
-  });
-
-  root.addEventListener('dragover', (event) => {
-    const dragging = tabPanelDraggingGroupState;
-    if (!dragging || !(dragging.source instanceof HTMLElement)) {
-      return;
-    }
-
-    const target = event.target;
-    if (!(target instanceof Element)) {
-      return;
-    }
-
-    // カーソル直下の .group-item を探す（dragging.source 自身は除外）
-    const targetGroup = target.closest('.group-item');
-    if (!(targetGroup instanceof HTMLElement) || targetGroup === dragging.source) {
-      // ドロップ先候補なし → インジケーターをクリアして記録をリセット
-      // preventDefault() を呼ばないことで、この位置での drop イベントを発火させない
-      clearGroupDropIndicators(root);
-      pendingDropTarget = null;
-      return;
-    }
-
-    // targetMeta が取得できない場合はドロップ不可
-    const targetMeta = groupMetadataMap.get(targetGroup);
-    if (!targetMeta || !Array.isArray(targetMeta.tabs) || targetMeta.tabs.length === 0) {
-      clearGroupDropIndicators(root);
-      pendingDropTarget = null;
-      return;
-    }
-
-    // ウィンドウをまたいだ移動を禁止する。
-    // sourceWindowId は dragstart 時の固定値を使用（スナップショット非依存）。
-    // targetWindowId は targetMeta.tabs から取得する。
-    // chrome.tabGroups.move() はウィンドウ間移動をサポートしないため、
-    // ここでブロックしないと expandedView モードで誤操作が発生しうる。
-    const sourceWindowId = dragging.sourceWindowId;
-    const targetWindowId = targetMeta.tabs[0]?.windowId;
-    if (
-      !Number.isFinite(sourceWindowId) ||
-      !Number.isFinite(targetWindowId) ||
-      sourceWindowId !== targetWindowId
-    ) {
-      // ドロップ不可 → preventDefault() を呼ばないことで drop も発火しない（HTML DnD 仕様）
-      clearGroupDropIndicators(root);
-      pendingDropTarget = null;
-      return;
-    }
-
-    // ここに到達した場合のみ有効なドロップ先として扱う
-    event.preventDefault();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = 'move';
-    }
-
-    // ターゲット要素の上半分／下半分でドロップ位置を判定
-    const rect = targetGroup.getBoundingClientRect();
-    const dropBefore = event.clientY < rect.top + rect.height / 2;
-
-    // インジケーターを更新（前フレームのものをクリアしてから付け直す）
-    clearGroupDropIndicators(root);
-    targetGroup.classList.add(dropBefore ? 'group-item--drop-before' : 'group-item--drop-after');
-
-    // ドロップ先を記録（DOM 操作は行わない）
-    pendingDropTarget = { targetGroupItem: targetGroup, dropBefore };
-    dragging.moved = true;
-  });
-
-  root.addEventListener('dragleave', (event) => {
-    // root の外にカーソルが出た場合のみインジケーターをクリア
-    if (!(event.relatedTarget instanceof Node) || !root.contains(event.relatedTarget)) {
-      clearGroupDropIndicators(root);
-      pendingDropTarget = null;
-    }
-  });
-
-  root.addEventListener('drop', async (event) => {
-    const dragging = tabPanelDraggingGroupState;
-    clearGroupDropIndicators(root);
-
-    if (!dragging || !(dragging.source instanceof HTMLElement)) {
-      pendingDropTarget = null;
-      return;
-    }
-
-    // dragover が記録したドロップ先を取得して即クリア
-    const pending = pendingDropTarget;
-    pendingDropTarget = null;
-
-    if (!pending || !(pending.targetGroupItem instanceof HTMLElement)) {
-      // 有効なドロップ先が記録されていなければ何もしない
-      return;
-    }
-
-    const targetMeta = groupMetadataMap.get(pending.targetGroupItem);
-    if (!targetMeta) {
-      return;
-    }
-
-    event.preventDefault();
-
-    try {
-      // sourceWindowId を sourceMeta に含めて渡す（moveTabGroupByDragAndDrop が windowId を必要とするため）
-      await moveTabGroupByDragAndDrop(
-        { ...dragging.metadata, sourceWindowId: dragging.sourceWindowId },
-        targetMeta,
-        pending.dropBefore
-      );
-      if (dragging.moved) {
-        tabPanelSuppressGroupHeaderClickUntil = Date.now() + 250;
-      }
-      await refreshTabs();
-    } catch (error) {
-      console.error('Failed to reorder tab group by drag and drop:', error);
-      await refreshTabs();
-    }
-  });
-
-  root.addEventListener('dragend', () => {
-    const dragging = tabPanelDraggingGroupState;
-    dragging?.source?.classList.remove('group-item--dragging');
-    if (dragging?.moved) {
-      tabPanelSuppressGroupHeaderClickUntil = Date.now() + 250;
-    }
-    clearGroupDropIndicators(root);
-    pendingDropTarget = null;
-    tabPanelDraggingGroupState = null;
-  });
-}
 async function setupTabDragAndDrop(root) {
   if (!root || root.dataset.tabDragDropBound === 'true') {
     return;
@@ -4621,7 +4205,6 @@ async function refreshTabs() {
     if (expandedView) {
       expandedView.replaceChildren(expandedFragment);
       await setupTabDragAndDrop(expandedView, { expandedMode: true });
-      setupTabGroupDragAndDrop(expandedView);
       await setupExpandedGroupWindowMove(expandedView);
     }
 
@@ -4715,7 +4298,6 @@ async function refreshTabs() {
 
   tabList.replaceChildren(fragment);
   await setupTabDragAndDrop(tabList);
-  setupTabGroupDragAndDrop(tabList);
   if (expandedView) {
     expandedView.replaceChildren();
   }
@@ -4764,18 +4346,6 @@ function attachEventListeners() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  // グループドロップインジケーター用スタイルを注入
-  const dropIndicatorStyle = document.createElement('style');
-  dropIndicatorStyle.textContent = `
-    .group-item--drop-before {
-      box-shadow: 0 -2px 0 0 var(--theme-color, #8ab4f8);
-    }
-    .group-item--drop-after {
-      box-shadow: 0 2px 0 0 var(--theme-color, #8ab4f8);
-    }
-  `;
-  document.head.appendChild(dropIndicatorStyle);
-
   await initializeTheme();
   setupDomainGroupingControls();
   setupAudioFilterControls();
@@ -4883,6 +4453,173 @@ chrome.runtime.onMessage.addListener((message) => {
 window.addEventListener('beforeunload', () => {
   postToParentMessage(PREVIEW_OVERLAY_VISIBILITY_MESSAGE, { visible: false, immediate: true });
 });
+
+
+// ═══════════════════════════════════════════════════════════════════
+// YouTube 埋め込み機能
+// 設計: youtube-embed-spec-v3.md に基づく Phase 1 実装
+// ═══════════════════════════════════════════════════════════════════
+
+// ── 定数 ────────────────────────────────────────────────────────
+const YOUTUBE_THUMB_BASE = 'https://img.youtube.com/vi';
+// chrome-extension:// オリジンからは www.youtube.com が Error 153 を返す。
+// youtube-nocookie.com は拡張機能コンテキストでの埋め込みを許可しており、
+// CSP にも両ドメインを記載済みのため nocookie を使用する。
+const YOUTUBE_EMBED_BASE = 'https://www.youtube-nocookie.com/embed';
+const YT_ID_REGEX        = /^[a-zA-Z0-9_-]{11}$/;
+
+// 現在展開中のカード要素への参照（同時展開 1 件制限）
+let activeYoutubeCardEl = null;
+
+// ── YouTube URL から動画 ID を抽出 ────────────────────────────
+// テキスト全体が単一 URL の場合のみ対象（v1）
+function extractYoutubeVideoId(text) {
+  if (!text) return null;
+  const trimmed = text.trim();
+  // スペースを含む場合は通常テキスト扱い
+  if (/\s/.test(trimmed)) return null;
+
+  try {
+    const u    = new URL(trimmed);
+    const host = u.hostname.replace(/^m\./, '').replace(/^www\./, '');
+
+    if (host === 'youtube.com') {
+      if (u.pathname === '/watch') {
+        const v = u.searchParams.get('v');
+        return (v && YT_ID_REGEX.test(v)) ? v : null;
+      }
+      const shortsMatch = u.pathname.match(/^\/shorts\/([a-zA-Z0-9_-]{11})(?:\/|$|\?)/);
+      if (shortsMatch && YT_ID_REGEX.test(shortsMatch[1])) return shortsMatch[1];
+      const embedMatch  = u.pathname.match(/^\/embed\/([a-zA-Z0-9_-]{11})(?:\/|$|\?)/);
+      if (embedMatch  && YT_ID_REGEX.test(embedMatch[1]))  return embedMatch[1];
+    }
+
+    if (host === 'youtu.be') {
+      const id = u.pathname.slice(1).split('/')[0];
+      return YT_ID_REGEX.test(id) ? id : null;
+    }
+  } catch {
+    // URL パース失敗 = 通常テキスト
+  }
+  return null;
+}
+
+// ── サムネイル状態に描画する ─────────────────────────────────
+function renderYoutubeThumbnail(wrapper, videoId, title) {
+  wrapper.innerHTML = '';
+
+  const thumb     = document.createElement('img');
+  thumb.className = 'workspace-card__youtube-thumb';
+  thumb.src       = `${YOUTUBE_THUMB_BASE}/${videoId}/mqdefault.jpg`;
+  thumb.alt       = title || 'YouTube';
+  thumb.loading   = 'lazy';
+  // mqdefault が存在しない動画はフォールバックサムネイルに切り替える
+  thumb.onerror   = () => { thumb.src = `${YOUTUBE_THUMB_BASE}/${videoId}/default.jpg`; };
+
+  const overlay     = document.createElement('div');
+  overlay.className = 'workspace-card__youtube-overlay';
+  const playBtn     = document.createElement('div');
+  playBtn.className = 'workspace-card__youtube-play';
+  playBtn.setAttribute('aria-hidden', 'true');
+  playBtn.innerHTML = `
+    <svg viewBox="0 0 68 48" width="68" height="48" xmlns="http://www.w3.org/2000/svg">
+      <path d="M66.52 7.74C65.7 4.56 63.2 2.06 60.02 1.24 54.8 0 34 0 34 0S13.2 0 7.98 1.24C4.8 2.06 2.3 4.56 1.48 7.74 0 13.24 0 24 0 24s0 10.76 1.48 16.26C2.3 43.44 4.8 45.94 7.98 46.76 13.2 48 34 48 34 48s20.8 0 26.02-1.24c3.18-.82 5.68-3.32 6.5-6.5C68 34.76 68 24 68 24s0-10.76-1.48-16.26z" fill="#ff0000"/>
+      <path d="M27 34.5l18-10.5-18-10.5z" fill="#fff"/>
+    </svg>`;
+  overlay.appendChild(playBtn);
+  wrapper.appendChild(thumb);
+  wrapper.appendChild(overlay);
+
+  // クリックで iframe 展開（once: true でハンドラを自動解除）
+  wrapper.addEventListener('click', () => activateYoutubeEmbed(wrapper, videoId, title), { once: true });
+}
+
+// ── iframe 展開状態に切り替える ──────────────────────────────
+function activateYoutubeEmbed(wrapper, videoId, title) {
+  // 既に展開中の別カードがあればサムネイルに戻す（同時展開 1 件制限）
+  if (activeYoutubeCardEl && activeYoutubeCardEl !== wrapper.closest('.workspace-card')) {
+    const prevWrapper = activeYoutubeCardEl.querySelector('.workspace-card__youtube');
+    if (prevWrapper) {
+      const prevVideoId = prevWrapper.dataset.videoId;
+      const prevTitle   = prevWrapper.dataset.title;
+      if (prevVideoId) renderYoutubeThumbnail(prevWrapper, prevVideoId, prevTitle);
+    }
+  }
+
+  wrapper.innerHTML = '';
+
+  // 「閉じる」ボタン
+  // z-index: 10 で iframe の上に確実に描画。
+  // rgba(0,0,0,0.7) 背景で YouTube エラー画面でも視認性を担保。
+  const closeBtn     = document.createElement('button');
+  closeBtn.className = 'workspace-card__youtube-close';
+  closeBtn.type      = 'button';
+  closeBtn.title     = 'サムネイルに戻す（Esc でも閉じられます）';
+  closeBtn.setAttribute('aria-label', 'サムネイルに戻す');
+  closeBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+    <path fill="currentColor" d="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12z"/>
+  </svg>`;
+  closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    renderYoutubeThumbnail(wrapper, videoId, title);
+    activeYoutubeCardEl = null;
+  });
+
+  const iframe = document.createElement('iframe');
+  iframe.className       = 'workspace-card__youtube-frame';
+  iframe.src             = `${YOUTUBE_EMBED_BASE}/${videoId}?autoplay=1&rel=0`;
+  iframe.title           = title || 'YouTube';
+  // 最小権限: autoplay・暗号化メディア・PiP のみ
+  // sandbox: chrome-extension:// ページ内の iframe は Chrome が暗黙的に
+  // sandbox 制約を適用し YouTube JS が実行できなくなる（Error 153 の原因）。
+  // 外部ドメイン（youtube-nocookie.com）に対しては allow-scripts + allow-same-origin を
+  // 明示することで YouTube プレイヤーの JS・Cookie・postMessage を有効化する。
+  // allow-same-origin を付けても相手は異なるオリジンなのでエスケープリスクはない。
+  // allow-forms / allow-popups-to-escape-sandbox は YouTube 埋め込みに不要なため除外。
+  iframe.sandbox         = 'allow-scripts allow-same-origin allow-popups allow-presentation';
+  iframe.allow           = 'autoplay; encrypted-media; picture-in-picture';
+  iframe.allowFullscreen = true;
+
+  wrapper.appendChild(closeBtn);
+  wrapper.appendChild(iframe);
+
+  activeYoutubeCardEl = wrapper.closest('.workspace-card');
+}
+
+// ── パネルクローズ・アンロード時の後処理 ─────────────────────
+// frame.src = '' で YouTube への通信を即座に切断し、音残りを防ぐ
+function cleanupYoutubeEmbed() {
+  if (!activeYoutubeCardEl) return;
+  const wrapper = activeYoutubeCardEl.querySelector('.workspace-card__youtube');
+  if (wrapper) {
+    const frame = wrapper.querySelector('.workspace-card__youtube-frame');
+    if (frame) frame.src = '';
+    wrapper.innerHTML = '';
+  }
+  activeYoutubeCardEl = null;
+}
+
+// ── Esc キーで展開中の埋め込みを閉じる ───────────────────────
+function handleYoutubeEmbedKeydown(event) {
+  if (event.key !== 'Escape' || !activeYoutubeCardEl) return;
+  const wrapper = activeYoutubeCardEl.querySelector('.workspace-card__youtube');
+  if (!wrapper) return;
+  event.stopPropagation();
+  event.preventDefault();
+  renderYoutubeThumbnail(wrapper, wrapper.dataset.videoId, wrapper.dataset.title);
+  activeYoutubeCardEl = null;
+}
+
+// ── YouTube カードの wrapper 要素を生成 ─────────────────────
+// data-video-id / data-title を持ち、サムネイル状態で初期化される
+function createYoutubeEmbed(videoId, title) {
+  const wrapper         = document.createElement('div');
+  wrapper.className     = 'workspace-card__youtube';
+  wrapper.dataset.videoId = videoId;
+  wrapper.dataset.title   = title || '';
+  renderYoutubeThumbnail(wrapper, videoId, title);
+  return wrapper;
+}
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local' || !changes) {
