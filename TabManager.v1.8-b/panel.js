@@ -4098,7 +4098,7 @@ function sortWindowsForExpandedView(windows, currentWindowId) {
 
 
 
-async function moveTabGroupByDragAndDrop(sourceMeta, targetMeta, dropBefore) {
+async function moveTabGroupByDragAndDrop(sourceMeta, targetMeta) {
   const sourceTabs = Array.isArray(sourceMeta?.tabs)
     ? sourceMeta.tabs.filter((tab) => Number.isFinite(tab?.id) && Number.isFinite(tab?.index))
     : [];
@@ -4112,30 +4112,37 @@ async function moveTabGroupByDragAndDrop(sourceMeta, targetMeta, dropBefore) {
 
   const sourceWindowId = sourceTabs[0].windowId;
   const targetWindowId = targetTabs[0].windowId;
-  if (!Number.isFinite(sourceWindowId) || !Number.isFinite(targetWindowId) || sourceWindowId != targetWindowId) {
+  if (!Number.isFinite(sourceWindowId) || !Number.isFinite(targetWindowId) || sourceWindowId !== targetWindowId) {
     return;
   }
 
-  const sourceTabIds = sourceTabs
-    .slice()
-    .sort((a, b) => a.index - b.index)
-    .map((tab) => tab.id);
-  const sourceIndices = sourceTabs.map((tab) => tab.index);
-
+  const sourceSorted = sourceTabs.slice().sort((a, b) => a.index - b.index);
   const targetSorted = targetTabs.slice().sort((a, b) => a.index - b.index);
-  let targetIndex = dropBefore ? targetSorted[0].index : (targetSorted[targetSorted.length - 1].index + 1);
 
-  const sourceMin = Math.min(...sourceIndices);
-  if (sourceMin < targetIndex) {
-    targetIndex -= sourceTabIds.length;
-  }
+  const sourceTabIds = sourceSorted.map((tab) => tab.id);
+  const targetTabIds = targetSorted.map((tab) => tab.id);
 
-  if (!Number.isFinite(targetIndex) || targetIndex < 0) {
+  const sourceStart = sourceSorted[0].index;
+  const targetStart = targetSorted[0].index;
+  const sourceLength = sourceTabIds.length;
+  const targetLength = targetTabIds.length;
+
+  if (!Number.isFinite(sourceStart) || !Number.isFinite(targetStart) || sourceStart === targetStart) {
     return;
   }
 
-  await chrome.tabs.move(sourceTabIds, { windowId: sourceWindowId, index: targetIndex });
+  if (sourceStart < targetStart) {
+    await chrome.tabs.move(targetTabIds, { windowId: sourceWindowId, index: sourceStart });
+    const sourceSwapIndex = targetStart + targetLength - sourceLength;
+    await chrome.tabs.move(sourceTabIds, { windowId: sourceWindowId, index: sourceSwapIndex });
+    return;
+  }
+
+  await chrome.tabs.move(sourceTabIds, { windowId: sourceWindowId, index: targetStart });
+  const targetSwapIndex = sourceStart + sourceLength - targetLength;
+  await chrome.tabs.move(targetTabIds, { windowId: sourceWindowId, index: targetSwapIndex });
 }
+
 
 function setupTabGroupDragAndDrop(root) {
   if (!root || root.dataset.groupDragDropBound === 'true') {
@@ -4252,11 +4259,8 @@ function setupTabGroupDragAndDrop(root) {
 
     event.preventDefault();
 
-    const rect = targetGroup.getBoundingClientRect();
-    const dropBefore = event.clientY < rect.top + rect.height / 2;
-
     try {
-      await moveTabGroupByDragAndDrop(dragging.metadata, targetMeta, dropBefore);
+      await moveTabGroupByDragAndDrop(dragging.metadata, targetMeta);
       if (dragging.moved) {
         tabPanelSuppressGroupHeaderClickUntil = Date.now() + 250;
       }
