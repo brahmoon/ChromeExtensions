@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FocusFlow</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header id="header">
+      <div class="header-top">
+        <div class="app-brand">
+          <span class="brand-mark">◈</span>
+          <span class="brand-name">FocusFlow</span>
+          <span class="brand-version">v1.0</span>
+        </div>
+        <div class="header-actions">
+          <div id="today-streak" class="streak-display" title="今日の完了数"></div>
+          <button class="icon-btn" id="settings-btn" title="設定">⚙</button>
+        </div>
+      </div>
+      <!-- Quick add -->
+      <div class="quick-add-wrap">
+        <span class="quick-add-icon">+</span>
+        <input type="text" id="quick-add-input" placeholder="タスクをすばやく追加... (Enter)" maxlength="200" autocomplete="off" spellcheck="false">
+      </div>
+      <!-- Inbox alert -->
+      <div id="inbox-alert" class="inbox-alert hidden">
+        <span>📥 Inboxに未整理のタスクが溜まっています</span>
+        <button id="inbox-alert-btn">整理する</button>
+      </div>
+    </header>
+
+    <!-- Nav tabs -->
+    <nav id="main-nav">
+      <button class="nav-tab active" data-view="today">
+        <span class="tab-icon">◎</span>Today
+      </button>
+      <button class="nav-tab" data-view="inbox">
+        <span class="tab-icon">📥</span>Inbox
+        <span id="inbox-badge" class="nav-badge hidden">0</span>
+      </button>
+      <button class="nav-tab" data-view="projects">
+        <span class="tab-icon">⬡</span>Projects
+      </button>
+    </nav>
+
+    <!-- Main content -->
+    <main id="main-content">
+
+      <!-- TODAY VIEW -->
+      <section id="view-today" class="view active">
+        <div class="view-header">
+          <h2 class="view-title">Today</h2>
+          <span id="today-date" class="today-date"></span>
+        </div>
+        <div id="today-list" class="task-list"></div>
+        <div id="today-empty" class="empty-state hidden">
+          <div class="empty-icon">◎</div>
+          <p>今日のタスクはありません</p>
+          <p class="empty-sub">タスクに「今日やる」をマークするか<br>期限を今日に設定してください</p>
+        </div>
+        <!-- Week heatmap -->
+        <div id="week-heatmap" class="week-heatmap">
+          <div class="heatmap-label">今週の完了</div>
+          <div id="heatmap-cells" class="heatmap-cells"></div>
+        </div>
+      </section>
+
+      <!-- INBOX VIEW -->
+      <section id="view-inbox" class="view">
+        <div class="view-header">
+          <h2 class="view-title">Inbox</h2>
+          <span class="view-sub">未整理タスク</span>
+        </div>
+        <div id="inbox-list" class="task-list"></div>
+        <div id="inbox-empty" class="empty-state hidden">
+          <div class="empty-icon">📥</div>
+          <p>Inboxは空です</p>
+          <p class="empty-sub">右クリックメニューやクイック追加で<br>タスクを記録できます</p>
+        </div>
+      </section>
+
+      <!-- PROJECTS VIEW -->
+      <section id="view-projects" class="view">
+        <div class="view-header">
+          <h2 class="view-title">Projects</h2>
+          <button class="add-project-btn" id="add-project-btn">+ New Project</button>
+        </div>
+        <div id="project-list" class="project-list"></div>
+        <!-- Project task list (slide-in) -->
+        <div id="project-detail" class="project-detail hidden">
+          <div class="project-detail-header">
+            <button class="back-btn" id="back-to-projects">← Projects</button>
+            <h3 id="project-detail-name"></h3>
+            <div class="project-progress-wrap">
+              <div id="project-progress-bar" class="progress-bar"><div class="progress-fill"></div></div>
+              <span id="project-progress-text" class="progress-text"></span>
+            </div>
+          </div>
+          <div class="project-detail-actions">
+            <button class="add-task-btn" id="add-task-in-project">+ タスク追加</button>
+          </div>
+          <div id="project-task-list" class="task-list"></div>
+          <div id="project-task-empty" class="empty-state hidden">
+            <div class="empty-icon">⬡</div>
+            <p>タスクがありません</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- SETTINGS VIEW -->
+      <section id="view-settings" class="view">
+        <div class="view-header">
+          <h2 class="view-title">Settings</h2>
+        </div>
+        <div class="settings-section">
+          <h3 class="settings-group-title">データ管理</h3>
+          <button class="settings-btn" id="export-btn">📤 データをエクスポート (JSON)</button>
+          <label class="settings-btn import-label">
+            📥 データをインポート
+            <input type="file" id="import-file" accept=".json" style="display:none">
+          </label>
+          <button class="settings-btn danger" id="clear-data-btn">🗑 全データを削除</button>
+        </div>
+        <div class="settings-section">
+          <h3 class="settings-group-title">About</h3>
+          <p class="settings-about">FocusFlow v1.0<br>ADHD特性ユーザーのための<br>タスク管理Chrome拡張</p>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- TASK DETAIL PANEL (slide-in overlay) -->
+    <div id="task-detail-panel" class="task-detail-panel hidden">
+      <div class="panel-header">
+        <button class="back-btn" id="close-task-detail">✕</button>
+        <div class="panel-title-wrap">
+          <input type="text" id="task-detail-title" class="task-title-input" maxlength="200">
+        </div>
+        <div class="panel-header-actions">
+          <button class="danger-icon-btn" id="delete-task-btn" title="タスクを削除">🗑</button>
+        </div>
+      </div>
+
+      <div class="panel-body">
+        <!-- Status -->
+        <div class="panel-section">
+          <label class="panel-label">状態</label>
+          <div id="status-selector" class="status-selector"></div>
+        </div>
+
+        <!-- Meta row -->
+        <div class="panel-meta-row">
+          <div class="meta-item">
+            <label class="panel-label">優先度</label>
+            <select id="task-priority" class="meta-select">
+              <option value="low">低</option>
+              <option value="medium">中</option>
+              <option value="high">高</option>
+            </select>
+          </div>
+          <div class="meta-item">
+            <label class="panel-label">期限</label>
+            <input type="date" id="task-due-date" class="meta-input">
+          </div>
+          <div class="meta-item center">
+            <label class="panel-label">今日やる</label>
+            <button id="today-toggle" class="today-toggle" title="今日やるフラグ">◎</button>
+          </div>
+        </div>
+
+        <!-- Project assign -->
+        <div class="panel-section">
+          <label class="panel-label">Project</label>
+          <select id="task-project" class="meta-select full-width"></select>
+        </div>
+
+        <!-- Tags -->
+        <div class="panel-section">
+          <label class="panel-label">タグ</label>
+          <div class="tag-input-wrap">
+            <input type="text" id="tag-input" class="tag-input" placeholder="タグを入力してEnter" maxlength="30">
+            <div id="tag-list" class="tag-list"></div>
+          </div>
+        </div>
+
+        <!-- Source URL -->
+        <div class="panel-section" id="source-url-section">
+          <label class="panel-label">参照URL</label>
+          <div class="url-display-wrap">
+            <span id="source-url-text" class="source-url-text"></span>
+            <button id="open-url-btn" class="open-url-btn hidden" title="URLを開く">↗ 開く</button>
+            <button id="set-current-url-btn" class="set-url-btn" title="現在のページを設定">📌 現在のページ</button>
+            <button id="clear-url-btn" class="clear-url-btn hidden" title="URLをクリア">✕</button>
+          </div>
+        </div>
+
+        <!-- Checklist -->
+        <div class="panel-section">
+          <label class="panel-label">チェックリスト</label>
+          <div id="checklist-items" class="checklist-items"></div>
+          <div class="checklist-add-wrap">
+            <input type="text" id="checklist-add-input" class="checklist-add-input" placeholder="+ ステップを追加..." maxlength="100">
+          </div>
+        </div>
+
+        <!-- Activity Log -->
+        <div class="panel-section">
+          <label class="panel-label">Activity Log</label>
+          <div id="activity-log" class="activity-log"></div>
+          <div class="comment-add-wrap">
+            <textarea id="comment-input" class="comment-input" placeholder="メモを追加..." rows="2" maxlength="500"></textarea>
+            <button id="add-comment-btn" class="add-comment-btn">追加</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PROJECT FORM MODAL -->
+    <div id="project-modal" class="modal-overlay hidden">
+      <div class="modal">
+        <h3 class="modal-title" id="project-modal-title">新しいProject</h3>
+        <input type="text" id="project-name-input" class="modal-input" placeholder="Project名" maxlength="50">
+        <div class="color-picker-wrap">
+          <label class="panel-label">カラー</label>
+          <div id="color-picker" class="color-picker"></div>
+        </div>
+        <div class="modal-actions">
+          <button class="modal-cancel" id="project-modal-cancel">キャンセル</button>
+          <button class="modal-confirm" id="project-modal-confirm">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TOAST -->
+    <div id="toast" class="toast hidden"></div>
+
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

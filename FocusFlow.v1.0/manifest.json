@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "FocusFlow.v1.0",
+  "version": "1.0.0",
+  "description": "ADHD特性ユーザー向けタスク管理ツール。Webページからタスクを即登録、止まった理由を記録し、今日やることに集中する。",
+  "permissions": [
+    "contextMenus",
+    "storage",
+    "tabs",
+    "activeTab"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "FocusFlow",
+    "default_badge_text": ""
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
