@@ -4960,6 +4960,8 @@ async function setupTabDragAndDrop(root) {
           });
         } catch (err) {
           console.error('Failed to move tab to new window:', err);
+        } finally {
+          await chrome.runtime.sendMessage({ type: 'ResumePanelHandoff' }).catch(() => {});
         }
       }
       return;
