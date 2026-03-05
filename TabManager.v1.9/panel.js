@@ -4261,6 +4261,9 @@ function setupTabGroupDragAndDrop(root) {
   // { targetGroupItem: HTMLElement, dropBefore: boolean } | null
   let pendingDropTarget = null;
 
+  // expanded-view 右余白ドロップ = 新規ウィンドウ作成フラグ
+  let pendingNewWindowGroupDrop = false;
+
   root.addEventListener('dragstart', (event) => {
     const target = event.target;
     if (!(target instanceof Element)) {
@@ -4333,6 +4336,12 @@ function setupTabGroupDragAndDrop(root) {
 
     const hoverGroup = evtTarget.closest('.group-item');
 
+    // window-column 内にいれば新規ウィンドウゾーンを解除
+    if (evtTarget.closest('.window-column') instanceof HTMLElement) {
+      pendingNewWindowGroupDrop = false;
+      getExpandedViewElement()?.classList.remove('expanded-view--new-window-target');
+    }
+
     if (hoverGroup instanceof HTMLElement && hoverGroup !== dragging.source) {
       // ── ケース①: .group-item 上にカーソルがある ─────────────────────
       const rect = hoverGroup.getBoundingClientRect();
@@ -4368,10 +4377,25 @@ function setupTabGroupDragAndDrop(root) {
       }
 
       if (!(listContainer instanceof HTMLElement)) {
+        // ── ケース③: expanded-view の右余白 → 新規ウィンドウドロップゾーン ──
+        const expandedView = evtTarget.closest('#expanded-view');
+        if (expandedView instanceof HTMLElement) {
+          clearGroupDropIndicators(root);
+          pendingDropTarget = null;
+          pendingNewWindowGroupDrop = true;
+          expandedView.classList.add('expanded-view--new-window-target');
+          event.preventDefault();
+          if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+          return;
+        }
         clearGroupDropIndicators(root);
         pendingDropTarget = null;
         return;
       }
+
+      // window-column 内 → 新規ウィンドウゾーン解除
+      pendingNewWindowGroupDrop = false;
+      getExpandedViewElement()?.classList.remove('expanded-view--new-window-target');
 
       const allItems = Array.from(
         listContainer.querySelectorAll(':scope > .group-item')
@@ -4409,22 +4433,19 @@ function setupTabGroupDragAndDrop(root) {
       return;
     }
 
-    // ウィンドウをまたいだ移動を禁止する。
-    // sourceWindowId は dragstart 時の固定値を使用（スナップショット非依存）。
-    // chrome.tabGroups.move() はウィンドウ間移動をサポートしないため、
-    // ここでブロックしないと expandedView モードで誤操作が発生しうる。
+    // ウィンドウ間の移動も許可する（expanded view）。
+    // chrome.tabGroups.move() はウィンドウ間非対応だが、moveGroupToWindow() が
+    // タブ単位移動 + chrome.tabs.group() で再グループ化するため問題ない。
+    // sourceWindowId / targetWindowId が両方有限でない場合のみ中断する。
     const sourceWindowId = dragging.sourceWindowId;
     const targetWindowId = targetMeta.tabs[0]?.windowId;
-    if (
-      !Number.isFinite(sourceWindowId) ||
-      !Number.isFinite(targetWindowId) ||
-      sourceWindowId !== targetWindowId
-    ) {
-      // ドロップ不可 → preventDefault() を呼ばないことで drop も発火しない（HTML DnD 仕様）
+    if (!Number.isFinite(sourceWindowId) || !Number.isFinite(targetWindowId)) {
+      // windowId が解決できない → ドロップ不可
       clearGroupDropIndicators(root);
       pendingDropTarget = null;
       return;
     }
+    const isCrossWindowGroup = sourceWindowId !== targetWindowId;
 
     event.preventDefault();
     if (event.dataTransfer) {
@@ -4442,6 +4463,8 @@ function setupTabGroupDragAndDrop(root) {
     if (!(event.relatedTarget instanceof Node) || !root.contains(event.relatedTarget)) {
       clearGroupDropIndicators(root);
       pendingDropTarget = null;
+      pendingNewWindowGroupDrop = false;
+      getExpandedViewElement()?.classList.remove('expanded-view--new-window-target');
     }
   });
 
@@ -4451,6 +4474,41 @@ function setupTabGroupDragAndDrop(root) {
 
     if (!dragging || !(dragging.source instanceof HTMLElement)) {
       pendingDropTarget = null;
+      pendingNewWindowGroupDrop = false;
+      getExpandedViewElement()?.classList.remove('expanded-view--new-window-target');
+      return;
+    }
+
+    // ── 新規ウィンドウドロップ ────────────────────────────────────────────
+    if (pendingNewWindowGroupDrop) {
+      pendingNewWindowGroupDrop = false;
+      getExpandedViewElement()?.classList.remove('expanded-view--new-window-target');
+      const sourceGroupId = dragging.metadata?.groupId;
+      const sourceGroupInfo = dragging.metadata?.groupInfo;
+      if (Number.isFinite(sourceGroupId) && sourceGroupId >= 0) {
+        event.preventDefault();
+        const label = (typeof sourceGroupInfo?.title === 'string' && sourceGroupInfo.title.length > 0)
+          ? sourceGroupInfo.title
+          : 'グループ';
+        try {
+          // ハンドオフを抑制してパネルが閉じないようにする
+          await chrome.runtime.sendMessage({ type: 'SuppressPanelHandoff' }).catch(() => {});
+          await moveGroupToNewWindow(sourceGroupId, sourceGroupInfo);
+          flashNewWindowZone();
+          showNewWindowMoveToast(label);
+          const panelWinId = await getPanelWindowId().catch(() => null);
+          if (Number.isFinite(panelWinId)) {
+            await chrome.windows.update(panelWinId, { focused: true }).catch(() => {});
+          }
+          if (dragging.moved) tabPanelSuppressGroupHeaderClickUntil = Date.now() + 250;
+          await refreshTabs();
+        } catch (err) {
+          console.error('Failed to move group to new window:', err);
+          await refreshTabs();
+        } finally {
+          await chrome.runtime.sendMessage({ type: 'ResumePanelHandoff' }).catch(() => {});
+        }
+      }
       return;
     }
 
@@ -4470,13 +4528,36 @@ function setupTabGroupDragAndDrop(root) {
 
     event.preventDefault();
 
+    const sourceWindowId = dragging.sourceWindowId;
+    const dropTargetWindowId = targetMeta.tabs[0]?.windowId;
+    const isCrossWindowGroupDrop =
+      Number.isFinite(sourceWindowId) &&
+      Number.isFinite(dropTargetWindowId) &&
+      sourceWindowId !== dropTargetWindowId;
+
     try {
-      // sourceWindowId を sourceMeta に含めて渡す（moveTabGroupByDragAndDrop が windowId を必要とするため）
-      await moveTabGroupByDragAndDrop(
-        { ...dragging.metadata, sourceWindowId: dragging.sourceWindowId },
-        targetMeta,
-        pending.dropBefore
-      );
+      if (isCrossWindowGroupDrop) {
+        // ── ウィンドウ間グループ移動 ─────────────────────────────────────
+        // ドロップ先タブのインデックスを基準に挿入位置を決定する
+        const targetTabsSorted = (targetMeta.tabs || [])
+          .filter((t) => Number.isFinite(t.index))
+          .sort((a, b) => a.index - b.index);
+        const insertIndex = pending.dropBefore
+          ? (targetTabsSorted[0]?.index ?? 0)
+          : (targetTabsSorted[targetTabsSorted.length - 1]?.index ?? 0) + 1;
+
+        const sourceGroupId = dragging.metadata?.groupId;
+        const sourceGroupInfo = dragging.metadata?.groupInfo;
+        await moveGroupToWindow(sourceGroupId, dropTargetWindowId, insertIndex, sourceGroupInfo);
+        await maybeRunAutoDomainGroupingForWindow(dropTargetWindowId);
+      } else {
+        // ── 同一ウィンドウ内の並び替え（従来通り） ─────────────────────────
+        await moveTabGroupByDragAndDrop(
+          { ...dragging.metadata, sourceWindowId: dragging.sourceWindowId },
+          targetMeta,
+          pending.dropBefore
+        );
+      }
       if (dragging.moved) {
         tabPanelSuppressGroupHeaderClickUntil = Date.now() + 250;
       }
@@ -4495,8 +4576,171 @@ function setupTabGroupDragAndDrop(root) {
     }
     clearGroupDropIndicators(root);
     pendingDropTarget = null;
+    pendingNewWindowGroupDrop = false;
+    getExpandedViewElement()?.classList.remove('expanded-view--new-window-target');
     tabPanelDraggingGroupState = null;
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ウィンドウ間移動ユーティリティ
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 移動先ウィンドウで自動ドメイングループ化が有効なら実行する。
+// 自動グループ化フラグは chrome.storage.local の AUTO_DOMAIN_GROUP_STORAGE_KEY で管理される。
+async function maybeRunAutoDomainGroupingForWindow(targetWindowId) {
+  if (!Number.isFinite(targetWindowId)) {
+    return;
+  }
+  try {
+    const result = await chrome.storage.local.get({ [AUTO_DOMAIN_GROUP_STORAGE_KEY]: false });
+    if (!result[AUTO_DOMAIN_GROUP_STORAGE_KEY]) {
+      return;
+    }
+    const response = await chrome.runtime.sendMessage({
+      type: GROUP_TABS_BY_DOMAIN_MESSAGE,
+      scope: DOMAIN_GROUP_SCOPE_CURRENT,
+      windowId: targetWindowId,
+    });
+    if (!response?.ok) {
+      console.warn('Auto domain grouping after window move failed:', response?.error);
+    }
+  } catch (error) {
+    console.error('Failed to run auto domain grouping after window move:', error);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 新規ウィンドウ作成 & アイテム移動
+// ─────────────────────────────────────────────────────────────────────────────
+
+// タブ1枚を新規ウィンドウにバックグラウンドで移動する
+async function moveTabToNewWindow(tabId) {
+  const newWin = await chrome.windows.create({ tabId, focused: false, type: 'normal' });
+  return newWin;
+}
+
+// グループ全タブを新規ウィンドウにバックグラウンドで移動し、再グループ化する
+async function moveGroupToNewWindow(sourceGroupId, sourceGroupInfo) {
+  const tabs = await chrome.tabs.query({ groupId: sourceGroupId });
+  tabs.sort((a, b) => a.index - b.index);
+  if (tabs.length === 0) return null;
+
+  const newWin = await chrome.windows.create({ tabId: tabs[0].id, focused: false, type: 'normal' });
+  if (!Number.isFinite(newWin?.id)) return null;
+
+  for (let i = 1; i < tabs.length; i++) {
+    await chrome.tabs.move(tabs[i].id, { windowId: newWin.id, index: -1 });
+  }
+
+  const newGroupId = await chrome.tabs.group({
+    tabIds: tabs.map((t) => t.id),
+    createProperties: { windowId: newWin.id },
+  });
+
+  if (newGroupId && sourceGroupInfo) {
+    const upd = {};
+    if (sourceGroupInfo.color && sourceGroupInfo.color !== 'grey') upd.color = sourceGroupInfo.color;
+    if (typeof sourceGroupInfo.title === 'string' && sourceGroupInfo.title.length > 0) upd.title = sourceGroupInfo.title;
+    if (Object.keys(upd).length > 0) {
+      try { await chrome.tabGroups.update(newGroupId, upd); } catch (_) {}
+    }
+  }
+  return newWin;
+}
+
+// 移動成功後のビジュアルフィードバック
+function showNewWindowMoveToast(label) {
+  const prev = document.getElementById('new-window-toast');
+  if (prev) prev.remove();
+
+  const toast = document.createElement('div');
+  toast.id = 'new-window-toast';
+  toast.className = 'new-window-toast';
+  toast.setAttribute('role', 'status');
+  toast.setAttribute('aria-live', 'polite');
+  toast.textContent = `「${label}」を新しいウィンドウに移動しました`;
+  document.body.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    toast.classList.add('new-window-toast--visible');
+    setTimeout(() => {
+      toast.classList.remove('new-window-toast--visible');
+      toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+    }, 2400);
+  });
+}
+
+function flashNewWindowZone() {
+  const el = getExpandedViewElement();
+  if (!el) return;
+  el.classList.remove('expanded-view--new-window-flash'); // reset if already running
+  void el.offsetWidth; // reflow
+  el.classList.add('expanded-view--new-window-flash');
+  el.addEventListener('animationend', () => {
+    el.classList.remove('expanded-view--new-window-flash');
+  }, { once: true });
+}
+
+// タブ1枚を別ウィンドウの指定インデックスに移動する。
+// ウィンドウ間移動は chrome.tabs.move() に windowId を追加するだけで動作する。
+async function moveTabToWindow(tabId, targetWindowId, targetIndex) {
+  await chrome.tabs.move(tabId, { windowId: targetWindowId, index: targetIndex });
+}
+
+// グループ内全タブを別ウィンドウに移動し、移動先で再グループ化する。
+// chrome.tabGroups.move() はウィンドウ間移動をサポートしないため、
+// タブ単位で移動 → chrome.tabs.group() で新グループを作成 → グループ情報を復元する。
+async function moveGroupToWindow(sourceGroupId, targetWindowId, targetIndex, sourceGroupInfo) {
+  // 移動するタブを順序通りに取得
+  const tabs = await chrome.tabs.query({ groupId: sourceGroupId });
+  tabs.sort((a, b) => a.index - b.index);
+  if (tabs.length === 0) {
+    return;
+  }
+
+  // 全タブを移動先ウィンドウの targetIndex 以降に順番に移動
+  // 先頭から順に移動すると index がずれるため、先頭タブを targetIndex に置いてから
+  // 残りを先頭タブの直後に -1 (末尾) で移動するのが最も安全
+  const firstTab = tabs[0];
+  await chrome.tabs.move(firstTab.id, { windowId: targetWindowId, index: targetIndex });
+  for (let i = 1; i < tabs.length; i++) {
+    await chrome.tabs.move(tabs[i].id, { windowId: targetWindowId, index: -1 });
+  }
+
+  // 移動先で全タブを新グループにまとめる
+  const movedTabIds = tabs.map((t) => t.id);
+  const newGroupId = await chrome.tabs.group({
+    tabIds: movedTabIds,
+    createProperties: { windowId: targetWindowId },
+  });
+
+  // 元グループの色・タイトルを新グループに復元する
+  if (newGroupId && sourceGroupInfo) {
+    const update = {};
+    if (sourceGroupInfo.color && sourceGroupInfo.color !== 'grey') {
+      update.color = sourceGroupInfo.color;
+    }
+    if (typeof sourceGroupInfo.title === 'string' && sourceGroupInfo.title.length > 0) {
+      update.title = sourceGroupInfo.title;
+    }
+    if (Object.keys(update).length > 0) {
+      try {
+        await chrome.tabGroups.update(newGroupId, update);
+      } catch (error) {
+        console.warn('Failed to restore group info after window move:', error);
+      }
+    }
+  }
+}
+
+// expanded view のウィンドウ間ドラッグ&ドロップをセットアップする。
+// タブDnD・グループDnD はそれぞれ setupTabDragAndDrop / setupTabGroupDragAndDrop で
+// ウィンドウ間移動に対応しているため、ここでは将来の拡張用スタブとして残す。
+async function setupExpandedGroupWindowMove(expandedView) {
+  // ウィンドウ間移動のコアロジックは
+  //   moveTabToWindow() / moveGroupToWindow() / maybeRunAutoDomainGroupingForWindow()
+  // に集約されており、各 DnD ハンドラの drop 内から呼ばれる。
 }
 function clearTabDropIndicators(root) {
   root.querySelectorAll('.tab-item--drop-before, .tab-item--drop-after').forEach((el) => {
@@ -4515,6 +4759,9 @@ async function setupTabDragAndDrop(root) {
 
   // dragover が記録し drop が読む。{ targetTabItem: HTMLElement, dropBefore: boolean } | null
   let pendingTabDropTarget = null;
+
+  // expanded-view 右余白ドロップ = 新規ウィンドウ作成フラグ
+  let pendingNewWindowDrop = false;
 
   root.addEventListener('dragstart', (event) => {
     const tabItem = event.target instanceof Element ? event.target.closest('.tab-item') : null;
@@ -4560,6 +4807,12 @@ async function setupTabDragAndDrop(root) {
 
     const hoverTab = evtTarget.closest('.tab-item');
 
+    // window-column 内にいれば新規ウィンドウゾーンを解除
+    if (evtTarget.closest('.window-column') instanceof HTMLElement) {
+      pendingNewWindowDrop = false;
+      getExpandedViewElement()?.classList.remove('expanded-view--new-window-target');
+    }
+
     if (hoverTab instanceof HTMLElement && hoverTab !== dragging.source) {
       // ── ケース①: .tab-item 上にカーソルがある ───────────────────────
       const rect = hoverTab.getBoundingClientRect();
@@ -4589,10 +4842,25 @@ async function setupTabDragAndDrop(root) {
       // 末尾アイテムより下 → 末尾の直後（drop-after）
       const listContainer = evtTarget.closest(LIST_SELECTOR);
       if (!(listContainer instanceof HTMLElement)) {
+        // ── ケース③: expanded-view 右余白 → 新規ウィンドウゾーン ──────
+        const expandedView = evtTarget.closest('#expanded-view');
+        if (expandedView instanceof HTMLElement) {
+          clearTabDropIndicators(root);
+          pendingTabDropTarget = null;
+          pendingNewWindowDrop = true;
+          expandedView.classList.add('expanded-view--new-window-target');
+          event.preventDefault();
+          if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+          return;
+        }
         clearTabDropIndicators(root);
         pendingTabDropTarget = null;
         return;
       }
+
+      // window-column 内 → 新規ウィンドウゾーン解除
+      pendingNewWindowDrop = false;
+      getExpandedViewElement()?.classList.remove('expanded-view--new-window-target');
 
       const allItems = Array.from(
         listContainer.querySelectorAll(':scope > .tab-item')
@@ -4639,6 +4907,8 @@ async function setupTabDragAndDrop(root) {
     if (!(event.relatedTarget instanceof Node) || !root.contains(event.relatedTarget)) {
       clearTabDropIndicators(root);
       pendingTabDropTarget = null;
+      pendingNewWindowDrop = false;
+      getExpandedViewElement()?.classList.remove('expanded-view--new-window-target');
     }
   });
 
@@ -4647,6 +4917,36 @@ async function setupTabDragAndDrop(root) {
 
     if (!dragging) {
       pendingTabDropTarget = null;
+      pendingNewWindowDrop = false;
+      getExpandedViewElement()?.classList.remove('expanded-view--new-window-target');
+      return;
+    }
+
+    // ── 新規ウィンドウドロップ ────────────────────────────────────────────
+    if (pendingNewWindowDrop) {
+      pendingNewWindowDrop = false;
+      getExpandedViewElement()?.classList.remove('expanded-view--new-window-target');
+      const sourceTab = dragging.tab;
+      if (sourceTab && Number.isFinite(sourceTab.id)) {
+        event.preventDefault();
+        const label = sourceTab.title || sourceTab.url || 'タブ';
+        try {
+          // ハンドオフを抑制してパネルが閉じないようにする
+          await chrome.runtime.sendMessage({ type: 'SuppressPanelHandoff' }).catch(() => {});
+          await moveTabToNewWindow(sourceTab.id);
+          flashNewWindowZone();
+          showNewWindowMoveToast(label);
+          const panelWinId = await getPanelWindowId().catch(() => null);
+          if (Number.isFinite(panelWinId)) {
+            await chrome.windows.update(panelWinId, { focused: true }).catch(() => {});
+          }
+          await refreshTabs();
+        } catch (err) {
+          console.error('Failed to move tab to new window:', err);
+        } finally {
+          await chrome.runtime.sendMessage({ type: 'ResumePanelHandoff' }).catch(() => {});
+        }
+      }
       return;
     }
 
@@ -4669,21 +4969,39 @@ async function setupTabDragAndDrop(root) {
 
     event.preventDefault();
 
+    // ドロップ先 .window-column の windowId を取得（expanded view の場合）
+    const targetWindowColumn = pending.targetTabItem.closest('.window-column');
+    const targetWindowId = targetWindowColumn
+      ? Number(targetWindowColumn.dataset.windowId)
+      : null;
+    const isCrossWindow =
+      Number.isFinite(targetWindowId) &&
+      Number.isFinite(sourceTab.windowId) &&
+      targetWindowId !== sourceTab.windowId;
+
     let targetIndex = targetMeta.tab.index;
     if (!pending.dropBefore) {
       targetIndex += 1;
     }
 
-    if (Number.isFinite(sourceTab.index) && sourceTab.index < targetIndex) {
-      targetIndex -= 1;
-    }
-
-    if (Number.isFinite(sourceTab.index) && sourceTab.index === targetIndex) {
-      return;
+    if (!isCrossWindow) {
+      // ── 同一ウィンドウ内の並び替え（従来通り） ─────────────────────────
+      if (Number.isFinite(sourceTab.index) && sourceTab.index < targetIndex) {
+        targetIndex -= 1;
+      }
+      if (Number.isFinite(sourceTab.index) && sourceTab.index === targetIndex) {
+        return;
+      }
     }
 
     try {
-      await chrome.tabs.move(sourceTab.id, { index: targetIndex });
+      if (isCrossWindow) {
+        // ── ウィンドウ間移動 ─────────────────────────────────────────────
+        await moveTabToWindow(sourceTab.id, targetWindowId, targetIndex);
+        await maybeRunAutoDomainGroupingForWindow(targetWindowId);
+      } else {
+        await chrome.tabs.move(sourceTab.id, { index: targetIndex });
+      }
       await refreshTabs();
     } catch (error) {
       console.error('Failed to reorder tab by drag and drop:', error);
@@ -4694,6 +5012,8 @@ async function setupTabDragAndDrop(root) {
     dragging?.source?.classList.remove('tab-item--dragging');
     clearTabDropIndicators(root);
     pendingTabDropTarget = null;
+    pendingNewWindowDrop = false;
+    getExpandedViewElement()?.classList.remove('expanded-view--new-window-target');
     dragging = null;
   });
 }

@@ -1142,3 +1142,44 @@ body.expanded-view-enabled #workspace-view .workspace-ungrouped-list .workspace-
   min-width: 0;
 }
 
+
+/* ── expanded-view 新規ウィンドウドロップゾーン ───────────────────────────── */
+#expanded-view.expanded-view--new-window-target {
+  outline: 2px dashed var(--tm-accent);
+  outline-offset: -3px;
+  background: rgba(138, 180, 248, 0.06);
+}
+
+@keyframes new-window-flash {
+  0%   { background: rgba(138, 180, 248, 0.18); }
+  100% { background: transparent; }
+}
+
+#expanded-view.expanded-view--new-window-flash {
+  animation: new-window-flash 0.55s ease-out forwards;
+}
+
+/* ── 新規ウィンドウ移動トースト ───────────────────────────────────────────── */
+.new-window-toast {
+  position: fixed;
+  bottom: 52px;
+  left: 50%;
+  transform: translateX(-50%) translateY(8px);
+  background: var(--tm-header-bg);
+  color: var(--tm-text-primary);
+  border: 1px solid var(--tm-border);
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 12px;
+  white-space: nowrap;
+  z-index: 9999;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+
+.new-window-toast--visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}

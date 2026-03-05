@@ -245,6 +245,12 @@ let panelState = {
   tabId: null,
 };
 
+// 新規ウィンドウ作成時に tabs.onActivated によるパネルハンドオフを一時抑制するフラグ
+// panel.js が SuppressPanelHandoff / ResumePanelHandoff メッセージで制御する
+let suppressPanelHandoff = false;
+let suppressPanelHandoffTimer = null;
+
+
 let panelStateReadyPromise = loadPanelState();
 let panelSyncReadyPromise = initializePanelSyncState();
 let previewEnabled = false;
@@ -1205,6 +1211,10 @@ async function syncPanelRuntimeState(reason) {
 }
 
 async function handoffPanelToTab(nextTabId) {
+  // 新規ウィンドウ移動中はハンドオフを抑制してパネルが閉じないようにする
+  if (suppressPanelHandoff) {
+    return;
+  }
   if (!panelState.isOpen || !Number.isFinite(nextTabId)) {
     return;
   }
@@ -2222,6 +2232,30 @@ async function moveGroupToAnotherWindowByDrag({ sourceGroupId, targetWindowId, m
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message?.type) {
     return;
+  }
+
+  if (message.type === 'SuppressPanelHandoff') {
+    // 新規ウィンドウ作成時にパネルハンドオフを一時停止する。
+    // タイムアウト（5秒）で自動解除するフェイルセーフ付き。
+    suppressPanelHandoff = true;
+    if (suppressPanelHandoffTimer) clearTimeout(suppressPanelHandoffTimer);
+    suppressPanelHandoffTimer = setTimeout(() => {
+      suppressPanelHandoff = false;
+      suppressPanelHandoffTimer = null;
+    }, 5000);
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (message.type === 'ResumePanelHandoff') {
+    // パネルハンドオフの抑制を解除する
+    suppressPanelHandoff = false;
+    if (suppressPanelHandoffTimer) {
+      clearTimeout(suppressPanelHandoffTimer);
+      suppressPanelHandoffTimer = null;
+    }
+    sendResponse({ ok: true });
+    return true;
   }
 
   if (message.type === 'TabManagerPanelClosedByUser') {
