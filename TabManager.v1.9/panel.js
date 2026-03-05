@@ -4548,10 +4548,8 @@ function setupTabGroupDragAndDrop(root) {
 
         const sourceGroupId = dragging.metadata?.groupId;
         const sourceGroupInfo = dragging.metadata?.groupInfo;
-        await runWithPanelHandoffSuppressed(async () => {
-          await moveGroupToWindow(sourceGroupId, dropTargetWindowId, insertIndex, sourceGroupInfo);
-          await maybeRunAutoDomainGroupingForWindow(dropTargetWindowId);
-        });
+        await moveGroupToWindow(sourceGroupId, dropTargetWindowId, insertIndex, sourceGroupInfo);
+        await maybeRunAutoDomainGroupingForWindow(dropTargetWindowId);
       } else {
         // ── 同一ウィンドウ内の並び替え（従来通り） ─────────────────────────
         await moveTabGroupByDragAndDrop(
@@ -4590,16 +4588,6 @@ function setupTabGroupDragAndDrop(root) {
 
 // 移動先ウィンドウで自動ドメイングループ化が有効なら実行する。
 // 自動グループ化フラグは chrome.storage.local の AUTO_DOMAIN_GROUP_STORAGE_KEY で管理される。
-
-async function runWithPanelHandoffSuppressed(task) {
-  await chrome.runtime.sendMessage({ type: 'SuppressPanelHandoff' }).catch(() => {});
-  try {
-    return await task();
-  } finally {
-    await chrome.runtime.sendMessage({ type: 'ResumePanelHandoff' }).catch(() => {});
-  }
-}
-
 async function maybeRunAutoDomainGroupingForWindow(targetWindowId) {
   if (!Number.isFinite(targetWindowId)) {
     return;
@@ -4948,16 +4936,15 @@ async function setupTabDragAndDrop(root) {
         event.preventDefault();
         const label = sourceTab.title || sourceTab.url || 'タブ';
         try {
-          await runWithPanelHandoffSuppressed(async () => {
-            await moveTabToNewWindow(sourceTab.id);
-            flashNewWindowZone();
-            showNewWindowMoveToast(label);
-            const panelWinId = await getPanelWindowId().catch(() => null);
-            if (Number.isFinite(panelWinId)) {
-              await chrome.windows.update(panelWinId, { focused: true }).catch(() => {});
-            }
-            await refreshTabs();
-          });
+          await chrome.runtime.sendMessage({ type: 'SuppressPanelHandoff' }).catch(() => {});
+          await moveTabToNewWindow(sourceTab.id);
+          flashNewWindowZone();
+          showNewWindowMoveToast(label);
+          const panelWinId = await getPanelWindowId().catch(() => null);
+          if (Number.isFinite(panelWinId)) {
+            await chrome.windows.update(panelWinId, { focused: true }).catch(() => {});
+          }
+          await refreshTabs();
         } catch (err) {
           console.error('Failed to move tab to new window:', err);
         } finally {
@@ -5014,10 +5001,8 @@ async function setupTabDragAndDrop(root) {
     try {
       if (isCrossWindow) {
         // ── ウィンドウ間移動 ─────────────────────────────────────────────
-        await runWithPanelHandoffSuppressed(async () => {
-          await moveTabToWindow(sourceTab.id, targetWindowId, targetIndex);
-          await maybeRunAutoDomainGroupingForWindow(targetWindowId);
-        });
+        await moveTabToWindow(sourceTab.id, targetWindowId, targetIndex);
+        await maybeRunAutoDomainGroupingForWindow(targetWindowId);
       } else {
         await chrome.tabs.move(sourceTab.id, { index: targetIndex });
       }
