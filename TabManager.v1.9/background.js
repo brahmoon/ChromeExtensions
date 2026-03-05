@@ -249,6 +249,39 @@ let panelState = {
 // panel.js が SuppressPanelHandoff / ResumePanelHandoff メッセージで制御する
 let suppressPanelHandoff = false;
 let suppressPanelHandoffTimer = null;
+let suppressPanelHandoffDepth = 0;
+
+function armSuppressPanelHandoffFailsafe() {
+  if (suppressPanelHandoffTimer) {
+    clearTimeout(suppressPanelHandoffTimer);
+  }
+
+  suppressPanelHandoffTimer = setTimeout(() => {
+    suppressPanelHandoff = false;
+    suppressPanelHandoffDepth = 0;
+    suppressPanelHandoffTimer = null;
+  }, 5000);
+}
+
+function beginSuppressPanelHandoff() {
+  suppressPanelHandoffDepth += 1;
+  suppressPanelHandoff = true;
+  armSuppressPanelHandoffFailsafe();
+}
+
+function endSuppressPanelHandoff() {
+  suppressPanelHandoffDepth = Math.max(0, suppressPanelHandoffDepth - 1);
+  if (suppressPanelHandoffDepth > 0) {
+    armSuppressPanelHandoffFailsafe();
+    return;
+  }
+
+  suppressPanelHandoff = false;
+  if (suppressPanelHandoffTimer) {
+    clearTimeout(suppressPanelHandoffTimer);
+    suppressPanelHandoffTimer = null;
+  }
+}
 
 
 let panelStateReadyPromise = loadPanelState();
@@ -2237,23 +2270,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'SuppressPanelHandoff') {
     // 新規ウィンドウ作成時にパネルハンドオフを一時停止する。
     // タイムアウト（5秒）で自動解除するフェイルセーフ付き。
-    suppressPanelHandoff = true;
-    if (suppressPanelHandoffTimer) clearTimeout(suppressPanelHandoffTimer);
-    suppressPanelHandoffTimer = setTimeout(() => {
-      suppressPanelHandoff = false;
-      suppressPanelHandoffTimer = null;
-    }, 5000);
+    beginSuppressPanelHandoff();
     sendResponse({ ok: true });
     return true;
   }
 
   if (message.type === 'ResumePanelHandoff') {
     // パネルハンドオフの抑制を解除する
-    suppressPanelHandoff = false;
-    if (suppressPanelHandoffTimer) {
-      clearTimeout(suppressPanelHandoffTimer);
-      suppressPanelHandoffTimer = null;
-    }
+    endSuppressPanelHandoff();
     sendResponse({ ok: true });
     return true;
   }
@@ -2271,23 +2295,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
       // フェイルセーフ: 5秒後に自動解除
-      suppressPanelHandoff = true;
-      if (suppressPanelHandoffTimer) clearTimeout(suppressPanelHandoffTimer);
-      suppressPanelHandoffTimer = setTimeout(() => {
-        suppressPanelHandoff = false;
-        suppressPanelHandoffTimer = null;
-      }, 5000);
+      beginSuppressPanelHandoff();
       try {
         const newWin = await chrome.windows.create({ tabId, focused: false, type: 'normal' });
         sendResponse({ ok: true, windowId: newWin?.id ?? null });
       } catch (err) {
         sendResponse({ ok: false, error: String(err) });
       } finally {
-        suppressPanelHandoff = false;
-        if (suppressPanelHandoffTimer) {
-          clearTimeout(suppressPanelHandoffTimer);
-          suppressPanelHandoffTimer = null;
-        }
+        endSuppressPanelHandoff();
       }
     })();
     return true; // sendResponse を非同期で呼ぶため true を返す

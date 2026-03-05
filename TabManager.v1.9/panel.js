@@ -4936,7 +4936,7 @@ async function setupTabDragAndDrop(root) {
         event.preventDefault();
         const label = sourceTab.title || sourceTab.url || 'タブ';
         try {
-          // suppress/resume は background.js の CreateWindowAndMoveTab 内で一括処理
+          await chrome.runtime.sendMessage({ type: 'SuppressPanelHandoff' }).catch(() => {});
           await moveTabToNewWindow(sourceTab.id);
           flashNewWindowZone();
           showNewWindowMoveToast(label);
@@ -4947,6 +4947,8 @@ async function setupTabDragAndDrop(root) {
           await refreshTabs();
         } catch (err) {
           console.error('Failed to move tab to new window:', err);
+        } finally {
+          await chrome.runtime.sendMessage({ type: 'ResumePanelHandoff' }).catch(() => {});
         }
       }
       return;
