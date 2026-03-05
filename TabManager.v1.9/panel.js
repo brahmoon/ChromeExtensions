@@ -4614,10 +4614,15 @@ async function maybeRunAutoDomainGroupingForWindow(targetWindowId) {
 // 新規ウィンドウ作成 & アイテム移動
 // ─────────────────────────────────────────────────────────────────────────────
 
-// タブ1枚を新規ウィンドウにバックグラウンドで移動する
+// タブ1枚を新規ウィンドウにバックグラウンドで移動する。
+// suppress → windows.create → resume を background.js 内で一括処理し、
+// tabs.onActivated との競合によるパネル閉じを防ぐ。
 async function moveTabToNewWindow(tabId) {
-  const newWin = await chrome.windows.create({ tabId, focused: false, type: 'normal' });
-  return newWin;
+  const resp = await chrome.runtime.sendMessage({ type: 'CreateWindowAndMoveTab', tabId });
+  if (!resp?.ok) {
+    throw new Error(resp?.error ?? 'CreateWindowAndMoveTab failed');
+  }
+  return { id: resp.windowId };
 }
 
 // グループ全タブを新規ウィンドウにバックグラウンドで移動し、再グループ化する
@@ -4931,8 +4936,7 @@ async function setupTabDragAndDrop(root) {
         event.preventDefault();
         const label = sourceTab.title || sourceTab.url || 'タブ';
         try {
-          // ハンドオフを抑制してパネルが閉じないようにする
-          await chrome.runtime.sendMessage({ type: 'SuppressPanelHandoff' }).catch(() => {});
+          // suppress/resume は background.js の CreateWindowAndMoveTab 内で一括処理
           await moveTabToNewWindow(sourceTab.id);
           flashNewWindowZone();
           showNewWindowMoveToast(label);
@@ -4943,8 +4947,6 @@ async function setupTabDragAndDrop(root) {
           await refreshTabs();
         } catch (err) {
           console.error('Failed to move tab to new window:', err);
-        } finally {
-          await chrome.runtime.sendMessage({ type: 'ResumePanelHandoff' }).catch(() => {});
         }
       }
       return;

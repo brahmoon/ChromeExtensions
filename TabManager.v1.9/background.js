@@ -2258,6 +2258,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'CreateWindowAndMoveTab') {
+    // suppress → windows.create → resume を background 内で一括処理する。
+    // panel.js 側で suppress → await create → resume とすると、
+    // sendMessage の往復レイテンシの間に tabs.onActivated が発火して
+    // suppressPanelHandoff が間に合わないケースがある。
+    // background 内で一気に処理することでその競合を排除する。
+    (async () => {
+      const tabId = message.tabId;
+      if (!Number.isFinite(tabId)) {
+        sendResponse({ ok: false, error: 'invalid tabId' });
+        return;
+      }
+      // フェイルセーフ: 5秒後に自動解除
+      suppressPanelHandoff = true;
+      if (suppressPanelHandoffTimer) clearTimeout(suppressPanelHandoffTimer);
+      suppressPanelHandoffTimer = setTimeout(() => {
+        suppressPanelHandoff = false;
+        suppressPanelHandoffTimer = null;
+      }, 5000);
+      try {
+        const newWin = await chrome.windows.create({ tabId, focused: false, type: 'normal' });
+        sendResponse({ ok: true, windowId: newWin?.id ?? null });
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err) });
+      } finally {
+        suppressPanelHandoff = false;
+        if (suppressPanelHandoffTimer) {
+          clearTimeout(suppressPanelHandoffTimer);
+          suppressPanelHandoffTimer = null;
+        }
+      }
+    })();
+    return true; // sendResponse を非同期で呼ぶため true を返す
+  }
+
+
   if (message.type === 'TabManagerPanelClosedByUser') {
     ensurePanelStateReady()
       .then(() => {
