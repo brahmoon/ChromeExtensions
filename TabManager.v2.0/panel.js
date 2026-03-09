@@ -2817,7 +2817,7 @@ function setupDomainGroupingControls() {
   const autoToggle = getDomainGroupingAutoToggle();
   if (autoToggle) {
     chrome.storage.local
-      .get({ [AUTO_DOMAIN_GROUP_STORAGE_KEY]: false })
+      .get({ [AUTO_DOMAIN_GROUP_STORAGE_KEY]: true })
       .then((result) => {
         autoToggle.checked = Boolean(result[AUTO_DOMAIN_GROUP_STORAGE_KEY]);
       })
@@ -4605,7 +4605,7 @@ async function maybeRunAutoDomainGroupingForWindow(targetWindowId) {
     return;
   }
   try {
-    const result = await chrome.storage.local.get({ [AUTO_DOMAIN_GROUP_STORAGE_KEY]: false });
+    const result = await chrome.storage.local.get({ [AUTO_DOMAIN_GROUP_STORAGE_KEY]: true });
     if (!result[AUTO_DOMAIN_GROUP_STORAGE_KEY]) {
       return;
     }
