@@ -119,6 +119,8 @@ let workspaceSuppressGroupHeaderClickUntil = 0;
 let workspaceGroups = loadWorkspaceGroupsFromStorage();
 let tabPanelDraggingGroupState = null;
 let tabPanelSuppressGroupHeaderClickUntil = 0;
+let tabPanelSuppressTabItemClickUntil = 0;
+let tabPanelSuppressDragDropClickUntil = 0;
 let workspaceGroupExpansionState = loadWorkspaceGroupExpansionState();
 
 function getTabListElement() {
@@ -4278,6 +4280,18 @@ function setupTabGroupDragAndDrop(root) {
   // expanded-view 右余白ドロップ = 新規ウィンドウ作成フラグ
   let pendingNewWindowGroupDrop = false;
 
+  root.addEventListener('click', (event) => {
+    if (Date.now() >= tabPanelSuppressDragDropClickUntil) {
+      return;
+    }
+    const groupHeader = event.target instanceof Element ? event.target.closest('.group-header') : null;
+    if (!(groupHeader instanceof HTMLElement)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
+
   root.addEventListener('dragstart', (event) => {
     const target = event.target;
     if (!(target instanceof Element)) {
@@ -4514,7 +4528,10 @@ function setupTabGroupDragAndDrop(root) {
           if (Number.isFinite(panelWinId)) {
             await chrome.windows.update(panelWinId, { focused: true }).catch(() => {});
           }
-          if (dragging.moved) tabPanelSuppressGroupHeaderClickUntil = Date.now() + 250;
+          if (dragging.moved) {
+            tabPanelSuppressGroupHeaderClickUntil = Date.now() + 300;
+            tabPanelSuppressDragDropClickUntil = tabPanelSuppressGroupHeaderClickUntil;
+          }
           await refreshTabs();
         } catch (err) {
           console.error('Failed to move group to new window:', err);
@@ -4562,6 +4579,9 @@ function setupTabGroupDragAndDrop(root) {
 
         const sourceGroupId = dragging.metadata?.groupId;
         const sourceGroupInfo = dragging.metadata?.groupInfo;
+        if (!Number.isFinite(sourceGroupId) || sourceGroupId < 0) {
+          throw new Error('Invalid source group id in group cross-window drop');
+        }
         await runWithPanelHandoffSuppressed(async () => {
           await moveGroupToWindow(sourceGroupId, dropTargetWindowId, insertIndex, sourceGroupInfo);
           await maybeRunAutoDomainGroupingForWindow(dropTargetWindowId);
@@ -4575,7 +4595,8 @@ function setupTabGroupDragAndDrop(root) {
         );
       }
       if (dragging.moved) {
-        tabPanelSuppressGroupHeaderClickUntil = Date.now() + 250;
+        tabPanelSuppressGroupHeaderClickUntil = Date.now() + 300;
+        tabPanelSuppressDragDropClickUntil = tabPanelSuppressGroupHeaderClickUntil;
       }
       await refreshTabs();
     } catch (error) {
@@ -4588,7 +4609,8 @@ function setupTabGroupDragAndDrop(root) {
     const dragging = tabPanelDraggingGroupState;
     dragging?.source?.classList.remove('group-item--dragging');
     if (dragging?.moved) {
-      tabPanelSuppressGroupHeaderClickUntil = Date.now() + 250;
+      tabPanelSuppressGroupHeaderClickUntil = Date.now() + 300;
+      tabPanelSuppressDragDropClickUntil = tabPanelSuppressGroupHeaderClickUntil;
     }
     clearGroupDropIndicators(root);
     pendingDropTarget = null;
@@ -4716,6 +4738,9 @@ function flashNewWindowZone() {
 // タブ1枚を別ウィンドウの指定インデックスに移動する。
 // ウィンドウ間移動は chrome.tabs.move() に windowId を追加するだけで動作する。
 async function moveTabToWindow(tabId, targetWindowId, targetIndex) {
+  if (!Number.isFinite(tabId) || !Number.isFinite(targetWindowId) || !Number.isFinite(targetIndex)) {
+    throw new Error('Invalid arguments for moveTabToWindow');
+  }
   await chrome.tabs.move(tabId, { windowId: targetWindowId, index: targetIndex });
 }
 
@@ -4723,6 +4748,10 @@ async function moveTabToWindow(tabId, targetWindowId, targetIndex) {
 // chrome.tabGroups.move() はウィンドウ間移動をサポートしないため、
 // タブ単位で移動 → chrome.tabs.group() で新グループを作成 → グループ情報を復元する。
 async function moveGroupToWindow(sourceGroupId, targetWindowId, targetIndex, sourceGroupInfo) {
+  if (!Number.isFinite(sourceGroupId) || sourceGroupId < 0 || !Number.isFinite(targetWindowId) || !Number.isFinite(targetIndex)) {
+    throw new Error('Invalid arguments for moveGroupToWindow');
+  }
+
   // 移動するタブを順序通りに取得
   const tabs = await chrome.tabs.query({ groupId: sourceGroupId });
   tabs.sort((a, b) => a.index - b.index);
@@ -4736,7 +4765,7 @@ async function moveGroupToWindow(sourceGroupId, targetWindowId, targetIndex, sou
   const firstTab = tabs[0];
   await chrome.tabs.move(firstTab.id, { windowId: targetWindowId, index: targetIndex });
   for (let i = 1; i < tabs.length; i++) {
-    await chrome.tabs.move(tabs[i].id, { windowId: targetWindowId, index: -1 });
+    await chrome.tabs.move(tabs[i].id, { windowId: targetWindowId, index: targetIndex + i });
   }
 
   // 移動先で全タブを新グループにまとめる
@@ -4779,7 +4808,7 @@ function clearTabDropIndicators(root) {
   });
 }
 
-async function setupTabDragAndDrop(root) {
+async function setupTabDragAndDrop(root, { expandedMode = false } = {}) {
   if (!root || root.dataset.tabDragDropBound === 'true') {
     return;
   }
@@ -4788,11 +4817,26 @@ async function setupTabDragAndDrop(root) {
   // { tab, source: HTMLElement } | null
   let dragging = null;
 
+  // drag&drop 直後の click 発火でタブ切り替え・パネルハンドオフが起きるのを抑制する。
+  let movedByDragAndDrop = false;
+
   // dragover が記録し drop が読む。{ targetTabItem: HTMLElement, dropBefore: boolean } | null
   let pendingTabDropTarget = null;
 
   // expanded-view 右余白ドロップ = 新規ウィンドウ作成フラグ
   let pendingNewWindowDrop = false;
+
+  root.addEventListener('click', (event) => {
+    if (!expandedMode || Date.now() >= tabPanelSuppressDragDropClickUntil) {
+      return;
+    }
+    const tabItem = event.target instanceof Element ? event.target.closest('.tab-item') : null;
+    if (!(tabItem instanceof HTMLElement)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
 
   root.addEventListener('dragstart', (event) => {
     const tabItem = event.target instanceof Element ? event.target.closest('.tab-item') : null;
@@ -4807,6 +4851,7 @@ async function setupTabDragAndDrop(root) {
 
     pendingTabDropTarget = null;
     dragging = { tab: metadata.tab, source: tabItem };
+    movedByDragAndDrop = false;
     tabItem.classList.add('tab-item--dragging');
 
     if (event.dataTransfer) {
@@ -4964,6 +5009,7 @@ async function setupTabDragAndDrop(root) {
         try {
           await runWithPanelHandoffSuppressed(async () => {
             await moveTabToNewWindow(sourceTab.id);
+            movedByDragAndDrop = true;
             flashNewWindowZone();
             showNewWindowMoveToast(label);
             const panelWinId = await getPanelWindowId().catch(() => null);
@@ -5032,8 +5078,10 @@ async function setupTabDragAndDrop(root) {
           await moveTabToWindow(sourceTab.id, targetWindowId, targetIndex);
           await maybeRunAutoDomainGroupingForWindow(targetWindowId);
         });
+        movedByDragAndDrop = true;
       } else {
         await chrome.tabs.move(sourceTab.id, { index: targetIndex });
+        movedByDragAndDrop = true;
       }
       await refreshTabs();
     } catch (error) {
@@ -5043,11 +5091,16 @@ async function setupTabDragAndDrop(root) {
 
   root.addEventListener('dragend', () => {
     dragging?.source?.classList.remove('tab-item--dragging');
+    if (movedByDragAndDrop) {
+      tabPanelSuppressTabItemClickUntil = Date.now() + 300;
+      tabPanelSuppressDragDropClickUntil = tabPanelSuppressTabItemClickUntil;
+    }
     clearTabDropIndicators(root);
     pendingTabDropTarget = null;
     pendingNewWindowDrop = false;
     getExpandedViewElement()?.classList.remove('expanded-view--new-window-target');
     dragging = null;
+    movedByDragAndDrop = false;
   });
 }
 
