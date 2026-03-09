@@ -1494,6 +1494,115 @@ function sortTabsByPathHierarchy(tabEntries) {
   return [...tabEntries].sort(compareDomainTabsByPath);
 }
 
+
+function getComparableTabUrlForGrouping(tab) {
+  if (!tab) {
+    return '';
+  }
+
+  if (typeof tab.url === 'string' && tab.url.length > 0) {
+    return tab.url;
+  }
+
+  if (typeof tab.pendingUrl === 'string' && tab.pendingUrl.length > 0) {
+    return tab.pendingUrl;
+  }
+
+  return '';
+}
+
+function hasTabOrderChanged(currentTabs, sortedTabs) {
+  if (!Array.isArray(currentTabs) || !Array.isArray(sortedTabs)) {
+    return false;
+  }
+
+  if (currentTabs.length !== sortedTabs.length) {
+    return true;
+  }
+
+  for (let index = 0; index < currentTabs.length; index += 1) {
+    if (currentTabs[index]?.id !== sortedTabs[index]?.id) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function sortTabsInGroupByUrlPath(windowId, groupId) {
+  if (!Number.isFinite(windowId) || !Number.isFinite(groupId) || groupId < 0) {
+    return false;
+  }
+
+  let groupTabs;
+  try {
+    groupTabs = await chrome.tabs.query({ windowId, groupId });
+  } catch (error) {
+    return false;
+  }
+
+  if (!Array.isArray(groupTabs) || groupTabs.length < 2) {
+    return false;
+  }
+
+  const sortableTabs = groupTabs
+    .filter((tab) => tab && Number.isFinite(tab.id))
+    .map((tab) => ({ ...tab, url: getComparableTabUrlForGrouping(tab) }));
+
+  if (sortableTabs.length < 2) {
+    return false;
+  }
+
+  const sortedTabs = sortTabsByPathHierarchy(sortableTabs);
+  if (!hasTabOrderChanged(sortableTabs, sortedTabs)) {
+    return false;
+  }
+
+  const sortedIds = sortedTabs.map((tab) => tab.id);
+  const firstIndex = Math.min(...sortableTabs.map((tab) => tab.index));
+
+  try {
+    await chrome.tabs.move(sortedIds, { index: firstIndex });
+    return true;
+  } catch (error) {
+    console.debug('Failed to sort tabs in group by URL path:', error);
+    return false;
+  }
+}
+
+async function sortAllTabGroupsInWindow(windowId) {
+  if (!Number.isFinite(windowId)) {
+    return false;
+  }
+
+  let tabs;
+  try {
+    tabs = await chrome.tabs.query({ windowId });
+  } catch (error) {
+    return false;
+  }
+
+  if (!Array.isArray(tabs) || tabs.length === 0) {
+    return false;
+  }
+
+  const groupIds = new Set();
+  for (const tab of tabs) {
+    if (!tab || !Number.isFinite(tab.groupId) || tab.groupId < 0 || tab.pinned) {
+      continue;
+    }
+    groupIds.add(tab.groupId);
+  }
+
+  let hasChanges = false;
+  for (const groupId of groupIds) {
+    const changed = await sortTabsInGroupByUrlPath(windowId, groupId);
+    hasChanges = hasChanges || changed;
+  }
+
+  return hasChanges;
+}
+
 async function resolveLastFocusedWindowId() {
   try {
     const [activeTab] = await chrome.tabs.query({
@@ -1984,7 +2093,9 @@ async function autoGroupTabByDomainCore(tab, { requireActiveContext } = {}) {
       normalized = await normalizeSingletonDomainGroupsInWindow(tab.windowId, tabsInWindow);
     }
 
-    if (normalized || !tabAlreadyInDestination || migrateTabIds.length > 0 || destination.kind === 'domain-from-misc') {
+    const sortedGroups = await sortAllTabGroupsInWindow(tab.windowId);
+
+    if (normalized || sortedGroups || !tabAlreadyInDestination || migrateTabIds.length > 0 || destination.kind === 'domain-from-misc') {
       await persistTabListSyncEntity('auto-domain-grouping');
     }
   } catch (error) {
@@ -2175,7 +2286,7 @@ async function groupTabsByDomain({ scope, windowId }) {
     }
   }
 
-  for (const entry of perWindow.values()) {
+  for (const [entryWindowId, entry] of perWindow.entries()) {
     const leftovers = entry.leftovers;
 
     for (const [domain, domainTabs] of entry.domains.entries()) {
@@ -2195,6 +2306,11 @@ async function groupTabsByDomain({ scope, windowId }) {
       if (Number.isFinite(leftoversGroupId)) {
         hasGroupingChanges = true;
       }
+    }
+
+    const sortedGroups = await sortAllTabGroupsInWindow(entryWindowId);
+    if (sortedGroups) {
+      hasGroupingChanges = true;
     }
   }
 
