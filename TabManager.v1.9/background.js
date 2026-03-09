@@ -295,7 +295,7 @@ let previewProcessing = false;
 const previewRetryTimeouts = new Map();
 const activationCaptureTimeouts = new Map();
 let previewStateReadyPromise = initializePreviewState();
-let autoDomainGroupingEnabled = false;
+let autoDomainGroupingEnabled = true;
 const tabGroupIdCache = new Map();
 const windowAutoDomainGroupingState = new Map();
 const detachedTabSourceWindowState = new Map();
@@ -336,7 +336,7 @@ async function syncTabGroupIdCacheForTabId(tabId) {
 async function loadAutoDomainGroupingPreference() {
   try {
     const stored = await chrome.storage.local.get({
-      [AUTO_DOMAIN_GROUP_STORAGE_KEY]: false,
+      [AUTO_DOMAIN_GROUP_STORAGE_KEY]: true,
     });
     autoDomainGroupingEnabled = Boolean(stored[AUTO_DOMAIN_GROUP_STORAGE_KEY]);
   } catch (error) {
@@ -1444,6 +1444,56 @@ function extractDomainForGrouping(url) {
   }
 }
 
+function extractPathSegmentsForGrouping(url) {
+  if (typeof url !== 'string' || url.length === 0) {
+    return [];
+  }
+
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname
+      .split('/')
+      .map((segment) => segment.trim().toLowerCase())
+      .filter((segment) => segment.length > 0);
+  } catch (error) {
+    return [];
+  }
+}
+
+function compareDomainTabsByPath(a, b) {
+  const aSegments = extractPathSegmentsForGrouping(a?.url);
+  const bSegments = extractPathSegmentsForGrouping(b?.url);
+  const sharedLength = Math.min(aSegments.length, bSegments.length);
+
+  for (let index = 0; index < sharedLength; index += 1) {
+    const compare = aSegments[index].localeCompare(bSegments[index]);
+    if (compare !== 0) {
+      return compare;
+    }
+  }
+
+  if (aSegments.length !== bSegments.length) {
+    return aSegments.length - bSegments.length;
+  }
+
+  const aUrl = typeof a?.url === 'string' ? a.url : '';
+  const bUrl = typeof b?.url === 'string' ? b.url : '';
+  const urlCompare = aUrl.localeCompare(bUrl);
+  if (urlCompare !== 0) {
+    return urlCompare;
+  }
+
+  return Number(a?.index ?? 0) - Number(b?.index ?? 0);
+}
+
+function sortTabsByPathHierarchy(tabEntries) {
+  if (!Array.isArray(tabEntries) || tabEntries.length < 2) {
+    return tabEntries;
+  }
+
+  return [...tabEntries].sort(compareDomainTabsByPath);
+}
+
 async function resolveLastFocusedWindowId() {
   try {
     const [activeTab] = await chrome.tabs.query({
@@ -2130,7 +2180,8 @@ async function groupTabsByDomain({ scope, windowId }) {
 
     for (const [domain, domainTabs] of entry.domains.entries()) {
       if (domainTabs.length > 1) {
-        const createdGroupId = await createTabGroup(domainTabs);
+        const sortedDomainTabs = sortTabsByPathHierarchy(domainTabs);
+        const createdGroupId = await createTabGroup(sortedDomainTabs);
         if (Number.isFinite(createdGroupId)) {
           hasGroupingChanges = true;
         }
