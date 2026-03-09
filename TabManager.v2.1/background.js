@@ -1332,8 +1332,24 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     persistTabListSyncEntity('updated').catch(() => {});
   }
 
+  // URL 変化はタブが別ドメインへ「移動」したことを意味する。
+  // キャッシュ更新前に移動元グループの ID を保存しておき、
+  // キャッシュ更新後にシングルトン解体処理を実行する。
+  // これにより「削除」と「URL 移動」の両方を同一ロジックで処理できる。
+  const previousGroupId = changeInfo.url ? tabGroupIdCache.get(tabId) : undefined;
+
   if (tab && Number.isFinite(tab.id)) {
     tabGroupIdCache.set(tab.id, Number.isFinite(tab.groupId) ? tab.groupId : -1);
+  }
+
+  // URL 移動によるグループ離脱：移動前グループに 1 タブが残る場合は misc へ退避する
+  if (changeInfo.url && Number.isFinite(previousGroupId) && previousGroupId >= 0 && tab && Number.isFinite(tab.windowId)) {
+    // getWindowAutoGroupingState で自動グループ化が有効なウィンドウのみ処理する
+    if (getWindowAutoGroupingState(tab.windowId)) {
+      disbandSingletonGroupOnTabLeave(tab.windowId, previousGroupId, { excludeTabId: tabId }).catch((error) => {
+        console.debug('Failed to handle singleton group on URL change:', error);
+      });
+    }
   }
 
   if (!previewEnabled) {
@@ -1951,7 +1967,14 @@ async function moveTabToGroupEnd(windowId, groupId, tabId) {
   }
 }
 
-async function disbandSingletonGroupAfterRemoval(windowId, groupId) {
+// ── ドメイングループからタブが「離脱」するときの共通処理 ────────────
+// 「削除」「別ドメインへの URL 移動」のいずれの場合も、
+// 離脱後にグループ内が 1 タブになったときはそのタブをグループから外し
+// misc グループへ再配置する。
+// windowId     : 対象ウィンドウ
+// groupId      : 離脱前にタブが所属していたグループの ID
+// excludeTabId : 離脱したタブ自身（まだウィンドウに存在する URL 移動の場合にクエリから除外）
+async function disbandSingletonGroupOnTabLeave(windowId, groupId, { excludeTabId = null } = {}) {
   if (!Number.isFinite(windowId) || !Number.isFinite(groupId) || groupId < 0) {
     return;
   }
@@ -1967,11 +1990,20 @@ async function disbandSingletonGroupAfterRemoval(windowId, groupId) {
     return;
   }
 
-  if (!Array.isArray(groupTabs) || groupTabs.length !== 1) {
+  if (!Array.isArray(groupTabs)) {
     return;
   }
 
-  const loneTab = groupTabs[0];
+  // 離脱タブ自身がまだクエリに含まれている場合（URL 移動直後など）は除外して残数を確認する
+  const remainingTabs = Number.isFinite(excludeTabId)
+    ? groupTabs.filter((t) => t.id !== excludeTabId)
+    : groupTabs;
+
+  if (remainingTabs.length !== 1) {
+    return;
+  }
+
+  const loneTab = remainingTabs[0];
   if (!loneTab || !Number.isFinite(loneTab.id)) {
     return;
   }
@@ -1979,7 +2011,7 @@ async function disbandSingletonGroupAfterRemoval(windowId, groupId) {
   try {
     await chrome.tabs.ungroup([loneTab.id]);
   } catch (error) {
-    console.debug('Failed to disband singleton group after tab removal:', error);
+    console.debug('Failed to disband singleton group on tab leave:', error);
     return;
   }
 
@@ -1989,8 +2021,13 @@ async function disbandSingletonGroupAfterRemoval(windowId, groupId) {
       await autoGroupTabByDomain(refreshed, { requireActiveContext: false });
     }
   } catch (error) {
-    // ignore follow-up regroup failures for closed or transient tabs
+    // タブが閉じられた・遷移中の場合は無視する
   }
+}
+
+// 後方互換エイリアス（onRemoved からの呼び出しを統一関数に委譲）
+async function disbandSingletonGroupAfterRemoval(windowId, groupId) {
+  await disbandSingletonGroupOnTabLeave(windowId, groupId);
 }
 
 async function runCommonGroupingForSingletonTabsInWindow(windowId, { excludeTabId } = {}) {
